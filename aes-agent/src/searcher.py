@@ -99,7 +99,10 @@ def search_university_requirements(university: str, program: str) -> list[dict]:
     return search(query, max_results=5)
 
 
-def search_nc_value(university: str, program: str, year: int = 2025) -> list[dict]:
+def search_nc_value(university: str, program: str, year: int = 0) -> list[dict]:
     """NC değeri ara."""
+    from datetime import datetime
+    if not year:
+        year = datetime.now().year
     query = f'Numerus Clausus {university} {program} {year} NC Wartesemester'
     return search(query, max_results=5)

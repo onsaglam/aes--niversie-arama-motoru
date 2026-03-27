@@ -71,6 +71,7 @@ export async function DELETE() {
     const result = db.prepare(
       "DELETE FROM programs WHERE last_scraped < datetime('now', '-30 days')"
     ).run();
+    db.exec("VACUUM");
     return NextResponse.json({ deleted: result.changes });
   } finally {
     db.close();

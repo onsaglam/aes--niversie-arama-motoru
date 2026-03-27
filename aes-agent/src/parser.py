@@ -282,7 +282,18 @@ def evaluate_eligibility(profile, program: ProgramDetail) -> ProgramDetail:
         else:
             passed.append(f"NC: {program.nc_value} — kabul ediliyor ✓")
 
-    # 5. Sonuç hesapla
+    # 5. Şehir tercihi — bilgilendirici not (engelleyici değil)
+    preferred = getattr(profile, "preferred_cities", [])
+    if preferred and program.city:
+        city_lower = program.city.lower()
+        pref_lower = [c.lower() for c in preferred if c.lower() not in ("fark etmez", "any")]
+        if pref_lower:
+            if any(pref in city_lower or city_lower in pref for pref in pref_lower):
+                passed.append(f"Şehir: {program.city} ✓ (tercih edilen)")
+            else:
+                passed.append(f"Şehir: {program.city} (tercih dışı — {', '.join(preferred[:2])} isteniyor)")
+
+    # 6. Sonuç hesapla
     n_issues = len(issues)
     student_accepts_conditional = getattr(profile, "conditional_admission", True)
 

@@ -754,6 +754,20 @@ async def run_agent(student_folder: str, quick: bool = False):
         console.print(f"Önce: mkdir -p {folder}")
         return
 
+    # Çalışıyor kilidi — dashboard'un durumu görmesi için
+    lock_file = folder / ".running"
+    lock_file.write_text(datetime.now().isoformat())
+
+    try:
+        await _run_agent_inner(student_folder, folder, quick)
+    finally:
+        try:
+            lock_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
     # ── 1. Profil oku ──────────────────────────────────────────────────
     console.print("\n[1/5] 📖 Profil okunuyor...")
     profile = read_profile(folder)

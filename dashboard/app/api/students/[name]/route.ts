@@ -50,7 +50,20 @@ export async function GET(_req: Request, { params }: { params: Promise<{ name: s
     cv: fs.existsSync(path.join(folder, "cv.pdf")),
   };
 
-  return NextResponse.json({ name, programs, lastRun, reports, documents });
+  // Ajan hâlâ çalışıyor mu? (.running dosyası varsa ve 2 saatten yeni ise evet)
+  const runningFile = path.join(folder, ".running");
+  let isRunning = false;
+  if (fs.existsSync(runningFile)) {
+    const ageMins = (Date.now() - fs.statSync(runningFile).mtimeMs) / 60000;
+    if (ageMins < 120) {
+      isRunning = true;
+    } else {
+      // Sahipsiz kalmış kilit dosyasını temizle
+      try { fs.unlinkSync(runningFile); } catch { /* ignore */ }
+    }
+  }
+
+  return NextResponse.json({ name, programs, lastRun, reports, documents, isRunning });
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ name: string }> }) {

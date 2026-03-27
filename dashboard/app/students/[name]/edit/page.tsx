@@ -66,6 +66,13 @@ export default function EditProfilePage() {
   };
 
   const handleSaveAndRun = async () => {
+    if (!profile?.desired_field?.trim()) {
+      alert("Lütfen 'İstenen Alan / Bölüm' alanını doldurun — araştırma için zorunludur.");
+      return;
+    }
+    if (!profile.german_level && !profile.english_level) {
+      if (!confirm("Dil sertifikası seçilmedi. Araştırma her iki dilde de program arayacak. Devam edilsin mi?")) return;
+    }
     await handleSave();
     router.push(`/students/${encodeURIComponent(name)}`);
   };

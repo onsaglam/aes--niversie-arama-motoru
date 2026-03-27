@@ -9,6 +9,7 @@ interface StudentSummary {
   hasProfile: boolean;
   hasResults: boolean;
   lastRun: string | null;
+  isRunning: boolean;
   field: string;
   degreeType: string;
   stats: {
@@ -224,11 +225,18 @@ export default function DashboardPage() {
                       </p>
                     )}
                   </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ml-2 ${
-                    s.hasResults ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"
-                  }`}>
-                    {s.hasResults ? "Araştırıldı" : "Bekliyor"}
-                  </span>
+                  {s.isRunning ? (
+                    <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ml-2 bg-blue-100 text-blue-700">
+                      <div className="w-2.5 h-2.5 border border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      Çalışıyor
+                    </span>
+                  ) : (
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ml-2 ${
+                      s.hasResults ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"
+                    }`}>
+                      {s.hasResults ? "Araştırıldı" : "Bekliyor"}
+                    </span>
+                  )}
                 </div>
 
                 {/* Alan + Derece */}

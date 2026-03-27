@@ -31,11 +31,13 @@ interface Program {
 }
 
 export default function ProgramsPage() {
-  const [stats,    setStats]    = useState<Stats | null>(null);
-  const [programs, setPrograms] = useState<Program[]>([]);
-  const [search,   setSearch]   = useState("");
-  const [loading,  setLoading]  = useState(true);
-  const [cleaning, setCleaning] = useState(false);
+  const [stats,       setStats]       = useState<Stats | null>(null);
+  const [programs,    setPrograms]    = useState<Program[]>([]);
+  const [search,      setSearch]      = useState("");
+  const [langFilter,  setLangFilter]  = useState("");
+  const [degFilter,   setDegFilter]   = useState("");
+  const [loading,     setLoading]     = useState(true);
+  const [cleaning,    setCleaning]    = useState(false);
 
   const loadData = () => {
     setLoading(true);
@@ -62,6 +64,8 @@ export default function ProgramsPage() {
   };
 
   const filtered = programs.filter((p) => {
+    if (langFilter && p.language !== langFilter) return false;
+    if (degFilter  && p.degree  !== degFilter)  return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -70,6 +74,9 @@ export default function ProgramsPage() {
       p.city?.toLowerCase().includes(q)
     );
   });
+
+  const languages = [...new Set(programs.map((p) => p.language).filter(Boolean))].sort();
+  const degrees   = [...new Set(programs.map((p) => p.degree).filter(Boolean))].sort();
 
   if (loading) return (
     <div className="text-center py-20 text-slate-400">
@@ -168,14 +175,34 @@ export default function ProgramsPage() {
       {/* Program listesi */}
       {!noDb && (
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               type="text"
               placeholder="Üniversite, program veya şehir ara..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            {languages.length > 0 && (
+              <select
+                value={langFilter}
+                onChange={(e) => setLangFilter(e.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Tüm diller</option>
+                {languages.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
+            )}
+            {degrees.length > 0 && (
+              <select
+                value={degFilter}
+                onChange={(e) => setDegFilter(e.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Tüm dereceler</option>
+                {degrees.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            )}
             <span className="text-xs text-slate-400 shrink-0">{filtered.length} sonuç</span>
           </div>
 

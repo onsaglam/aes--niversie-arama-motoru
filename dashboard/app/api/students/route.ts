@@ -9,6 +9,7 @@ export interface StudentSummary {
   hasProfile: boolean;
   hasResults: boolean;
   lastRun: string | null;
+  isRunning: boolean;
   stats: {
     total: number;
     uygun: number;
@@ -77,11 +78,19 @@ export async function GET() {
           degreeType = p.degree_type ?? "";
         }
       } catch { /* ignore */ }
+      // .running dosyası varsa ve 2 saatten yeni ise ajan çalışıyordur
+      const runFile = path.join(folder, ".running");
+      let isRunning = false;
+      if (fs.existsSync(runFile)) {
+        const ageMins = (Date.now() - fs.statSync(runFile).mtimeMs) / 60000;
+        isRunning = ageMins < 120;
+      }
       return {
         name,
         hasProfile: fs.existsSync(path.join(folder, "profil.docx")) || fs.existsSync(path.join(folder, "profil.json")),
         hasResults: fs.readdirSync(folder).some((f) => f.startsWith("arastirma_")),
         lastRun: getLastRunDate(folder),
+        isRunning,
         stats: parseResultsJson(folder),
         field,
         degreeType,

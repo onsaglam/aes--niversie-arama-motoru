@@ -34,6 +34,7 @@ interface StudentDetail {
   programs: Program[];
   lastRun: string | null;
   reports: string[];
+  isRunning: boolean;
   documents: {
     profil: boolean;
     transkript: boolean;
@@ -111,6 +112,21 @@ export default function StudentPage() {
       .catch(() => {/* ignore */});
   }, [name]);
 
+  // Arka planda çalışan ajan varsa 5 saniyede bir yenile
+  useEffect(() => {
+    if (!detail?.isRunning || running) return;
+    const timer = setInterval(() => {
+      fetch(`/api/students/${encodeURIComponent(name)}`)
+        .then((r) => r.json())
+        .then((d) => {
+          setDetail(d);
+          if (!d.isRunning) clearInterval(timer);
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [detail?.isRunning, running, name]);
+
   // Log otomatik scroll
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -178,10 +194,18 @@ export default function StudentPage() {
         <ArrowLeft className="w-4 h-4" /> Tüm Öğrenciler
       </Link>
 
+      {/* Arka planda çalışıyor uyarısı */}
+      {detail?.isRunning && !running && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200 text-sm text-blue-700">
+          <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0" />
+          <span>Araştırma arka planda devam ediyor... Sayfa otomatik güncelleniyor.</span>
+        </div>
+      )}
+
       {/* Başlık */}
       <div className="flex flex-col sm:flex-row sm:items-start gap-4 justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">{name.replace(/_/g, " ")}</h1>
+          <h1 className="text-2xl font-bold text-slate-800">{profile?.name || name.replace(/_/g, " ")}</h1>
           {detail?.lastRun && (
             <p className="text-sm text-slate-400 mt-1">Son araştırma: {detail.lastRun}</p>
           )}
