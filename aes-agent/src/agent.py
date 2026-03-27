@@ -218,6 +218,81 @@ def _is_private_university(university_name: str) -> bool:
     return any(keyword in name_lower for keyword in _PRIVATE_UNIVERSITIES)
 
 
+# Alan adından üniversite adına eşleme (heuristik domain→ad dönüşümünü iyileştirir)
+_DOMAIN_TO_UNI: dict[str, str] = {
+    "tum.de":               "TU München",
+    "tu-berlin.de":         "TU Berlin",
+    "tu-dresden.de":        "TU Dresden",
+    "rwth-aachen.de":       "RWTH Aachen",
+    "kit.edu":              "KIT Karlsruhe",
+    "tu-darmstadt.de":      "TU Darmstadt",
+    "uni-stuttgart.de":     "Universität Stuttgart",
+    "uni-hannover.de":      "Leibniz Universität Hannover",
+    "tu-braunschweig.de":   "TU Braunschweig",
+    "lmu.de":               "LMU München",
+    "uni-heidelberg.de":    "Universität Heidelberg",
+    "fu-berlin.de":         "FU Berlin",
+    "hu-berlin.de":         "HU Berlin",
+    "uni-hamburg.de":       "Universität Hamburg",
+    "uni-frankfurt.de":     "Goethe-Universität Frankfurt",
+    "uni-koeln.de":         "Universität Köln",
+    "uni-bonn.de":          "Universität Bonn",
+    "uni-muenster.de":      "Universität Münster",
+    "uni-goettingen.de":    "Universität Göttingen",
+    "uni-freiburg.de":      "Universität Freiburg",
+    "uni-tuebingen.de":     "Universität Tübingen",
+    "uni-wuerzburg.de":     "Universität Würzburg",
+    "uni-mainz.de":         "JGU Mainz",
+    "uni-mannheim.de":      "Universität Mannheim",
+    "fau.de":               "FAU Erlangen-Nürnberg",
+    "uni-bremen.de":        "Universität Bremen",
+    "hs-bremen.de":         "Hochschule Bremen",
+    "uni-kiel.de":          "CAU Kiel",
+    "uni-rostock.de":       "Universität Rostock",
+    "uni-greifswald.de":    "Universität Greifswald",
+    "uni-jena.de":          "Friedrich-Schiller-Universität Jena",
+    "uni-halle.de":         "MLU Halle-Wittenberg",
+    "uni-leipzig.de":       "Universität Leipzig",
+    "uni-due.de":           "Universität Duisburg-Essen",
+    "rub.de":               "Ruhr-Universität Bochum",
+    "tu-dortmund.de":       "TU Dortmund",
+    "uni-bielefeld.de":     "Universität Bielefeld",
+    "uni-paderborn.de":     "Universität Paderborn",
+    "uni-siegen.de":        "Universität Siegen",
+    "uni-giessen.de":       "JLU Gießen",
+    "uni-marburg.de":       "Philipps-Universität Marburg",
+    "uni-kassel.de":        "Universität Kassel",
+    "tu-kaiserslautern.de": "RPTU Kaiserslautern",
+    "uni-saarland.de":      "Universität des Saarlandes",
+    "uni-bayreuth.de":      "Universität Bayreuth",
+    "uni-augsburg.de":      "Universität Augsburg",
+    "uni-regensburg.de":    "Universität Regensburg",
+    "uni-passau.de":        "Universität Passau",
+    "uni-ulm.de":           "Universität Ulm",
+    "uni-konstanz.de":      "Universität Konstanz",
+    "uni-hohenheim.de":     "Universität Hohenheim",
+    "uni-koblenz.de":       "Universität Koblenz",
+    "uni-trier.de":         "Universität Trier",
+}
+
+
+def _domain_to_university(url: str) -> str:
+    """URL'den üniversite adını çıkar — önce lookup tablosuna bak, sonra heuristik uygula."""
+    domain = url.split("/")[2] if "//" in url else url
+    domain = domain.replace("www.", "").lower()
+    # Tam eşleşme
+    if domain in _DOMAIN_TO_UNI:
+        return _DOMAIN_TO_UNI[domain]
+    # Kısmi eşleşme (subdomain için)
+    for key, val in _DOMAIN_TO_UNI.items():
+        if domain.endswith("." + key) or domain == key:
+            return val
+    # Fallback heuristik
+    name = domain.replace(".de", "").replace(".edu", "")
+    name = name.replace("uni-", "Uni ").replace("tu-", "TU ").replace("fh-", "FH ").replace("hs-", "HS ")
+    return name.title()
+
+
 # ─── DAAD API Araması ─────────────────────────────────────────────────────────
 
 async def search_programs_daad(profile) -> list[ProgramDetail]:
@@ -356,9 +431,8 @@ async def search_programs_web(profile) -> list[ProgramDetail]:
                 seen_urls.add(url)
                 # Sadece üniversite sitelerini al
                 if any(x in url for x in [".de/", "uni-", "tu-", "fh-", "hs-", "hochschule"]):
-                    domain = url.split("/")[2] if "//" in url else url
                     prog = ProgramDetail(
-                        university = domain.replace("www.", "").replace(".de", "").replace("uni-", "Uni ").title(),
+                        university = _domain_to_university(url),
                         program    = hit.get("title", ""),
                         url        = url,
                         notes      = hit.get("content", "")[:300],

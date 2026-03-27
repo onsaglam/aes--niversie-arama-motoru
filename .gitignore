@@ -20,6 +20,9 @@ build/
 aes-agent/cache/
 aes-agent/logs/
 
+# SQLite veritabanı (üretilen veri, kaynak kod değil)
+aes-agent/programs.db
+
 # Öğrenci verileri — gizlilik
 aes-agent/ogrenciler/*/transkript.pdf
 aes-agent/ogrenciler/*/dil_belgesi.pdf
