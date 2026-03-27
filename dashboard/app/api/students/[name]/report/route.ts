@@ -4,11 +4,17 @@ import path from "path";
 
 const STUDENTS_DIR = path.resolve(process.cwd(), "../aes-agent/ogrenciler");
 
+function safeName(n: string): boolean {
+  return /^[\w\-çÇğĞıİöÖşŞüÜ][\w\s\-çÇğĞıİöÖşŞüÜ]{0,60}$/.test(n) && !n.includes("..");
+}
+
 export async function GET(req: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
+  if (!safeName(name)) return NextResponse.json({ error: "Geçersiz öğrenci adı" }, { status: 400 });
+
   const file = new URL(req.url).searchParams.get("file");
 
-  if (!file || file.includes("..")) {
+  if (!file || file.includes("..") || file.includes("/")) {
     return NextResponse.json({ error: "Geçersiz dosya adı" }, { status: 400 });
   }
 

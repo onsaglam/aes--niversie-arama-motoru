@@ -14,8 +14,15 @@ function resolvePython(): string {
   return VENV_PYTHON; // başarısız olursa orijinali dene, hata mesajı döner
 }
 
+function safeName(name: string): boolean {
+  return /^[\w\-çÇğĞıİöÖşŞüÜ][\w\s\-çÇğĞıİöÖşŞüÜ]{0,60}$/.test(name) && !name.includes("..");
+}
+
 export async function POST(_req: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
+  if (!safeName(name)) {
+    return new Response("Geçersiz öğrenci adı", { status: 400 });
+  }
 
   // .running kilit dosyası varsa ve 2 saatten yeni ise çift çalıştırmayı engelle
   const runFile = path.join(STUDENTS_DIR, name, ".running");

@@ -434,7 +434,7 @@ export default function StudentPage() {
             >
               Tümü ({sorted.length})
             </button>
-            {(["uygun", "sartli", "uygun_degil", "veri_yok"] as const).map((key) =>
+            {(["uygun", "sartli", "uygun_degil", "veri_yok", "taranmadi"] as const).map((key) =>
               counts[key] ? (
                 <button
                   key={key}

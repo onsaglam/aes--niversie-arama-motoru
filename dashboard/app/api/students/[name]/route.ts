@@ -12,8 +12,13 @@ export interface ProgramResult {
   url: string;
 }
 
+function safeName(name: string): boolean {
+  return /^[\w\-çÇğĞıİöÖşŞüÜ][\w\s\-çÇğĞıİöÖşŞüÜ]{0,60}$/.test(name) && !name.includes("..");
+}
+
 export async function GET(_req: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
+  if (!safeName(name)) return NextResponse.json({ error: "Geçersiz öğrenci adı" }, { status: 400 });
   const folder = path.join(STUDENTS_DIR, name);
 
   if (!fs.existsSync(folder)) {
@@ -68,6 +73,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ name: s
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
+  if (!safeName(name)) return NextResponse.json({ error: "Geçersiz öğrenci adı" }, { status: 400 });
   const folder = path.join(STUDENTS_DIR, name);
 
   if (!fs.existsSync(folder)) {
