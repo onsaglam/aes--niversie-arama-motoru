@@ -6,8 +6,6 @@ import Link from "next/link";
 
 interface Profile {
   name: string;
-  email: string;
-  phone: string;
   nationality: string;
   current_university: string;
   department: string;
@@ -151,8 +149,6 @@ export default function EditProfilePage() {
           <div className="grid grid-cols-2 gap-4">
             <Field label="Ad Soyad"><Input field="name" /></Field>
             <Field label="Milliyet"><Input field="nationality" placeholder="Türk" /></Field>
-            <Field label="E-posta"><Input field="email" placeholder="ornek@email.com" /></Field>
-            <Field label="Telefon"><Input field="phone" placeholder="+90 555 000 0000" /></Field>
           </div>
         </section>
 

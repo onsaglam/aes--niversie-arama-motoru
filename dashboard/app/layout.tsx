@@ -25,7 +25,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <p className="text-xs text-slate-400 mt-0.5">Üniversite Araştırma Paneli</p>
               </div>
             </div>
-            <div className="ml-auto text-xs text-slate-400">Bremen, Germany</div>
+            <nav className="ml-auto flex items-center gap-4">
+              <a href="/programs" className="text-xs text-slate-500 hover:text-blue-600 transition-colors">
+                Veritabanı
+              </a>
+              <span className="text-xs text-slate-300">|</span>
+              <span className="text-xs text-slate-400">Bremen, Germany</span>
+            </nav>
           </div>
         </header>
 

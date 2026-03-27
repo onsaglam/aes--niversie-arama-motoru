@@ -35,6 +35,7 @@ from searcher import search
 from scraper  import fetch_page
 from parser   import extract_program_data, extract_from_pdf, evaluate_eligibility, ProgramDetail
 from reporter import generate_word_report, generate_excel_report
+from database import ProgramDatabase
 
 console     = Console()
 STUDENTS_DIR  = Path("ogrenciler")
@@ -128,6 +129,7 @@ class RateLimitTracker:
 
 
 rate_tracker = RateLimitTracker()
+db           = ProgramDatabase()          # Program veritabanı (programs.db)
 
 # ─── Modül seviyesi sabitler ──────────────────────────────────────────────────
 
@@ -501,6 +503,53 @@ def _merge_pdf_data(prog: ProgramDetail, data: dict):
         prog.sources.append("modulhandbuch_pdf")
 
 
+# ─── DB Yardımcı Fonksiyonları ────────────────────────────────────────────────
+
+def _apply_db_cache(prog: ProgramDetail, cached: dict) -> None:
+    """DB cache'inden gelen veriyi ProgramDetail'e uygula."""
+    for db_field, prog_field in (
+        ("city",                  "city"),
+        ("language",              "language"),
+        ("deadline_wise",         "deadline_wise"),
+        ("deadline_sose",         "deadline_sose"),
+        ("german_requirement",    "german_requirement"),
+        ("english_requirement",   "english_requirement"),
+        ("nc_value",              "nc_value"),
+        ("min_gpa",               "min_gpa"),
+        ("conditional_admission", "conditional_admission"),
+    ):
+        val = cached.get(db_field)
+        if val is not None and val != "":
+            setattr(prog, prog_field, bool(val) if db_field == "conditional_admission" else val)
+    if cached.get("uni_assist"):
+        prog.uni_assist_required = True
+    prog.confidence = cached.get("confidence", 0.5)
+    if "db_cache" not in prog.sources:
+        prog.sources.append("db_cache")
+
+
+def _prog_to_db_dict(prog: ProgramDetail) -> dict:
+    """ProgramDetail → DB kaydetmek için dict."""
+    return {
+        "university":          prog.university,
+        "program":             prog.program,
+        "city":                prog.city,
+        "language":            prog.language,
+        "degree":              prog.degree,
+        "url":                 prog.url or None,
+        "deadline_wise":       prog.deadline_wise,
+        "deadline_sose":       prog.deadline_sose,
+        "german_requirement":  prog.german_requirement,
+        "english_requirement": prog.english_requirement,
+        "nc_value":            prog.nc_value,
+        "min_gpa":             prog.min_gpa,
+        "uni_assist_required": prog.uni_assist_required,
+        "conditional_admission": prog.conditional_admission,
+        "source":              ", ".join(prog.sources[:4]),
+        "confidence":          prog.confidence,
+    }
+
+
 # ─── Detay Sayfası Zenginleştirme ────────────────────────────────────────────
 
 def _extract_uni_url_from_daad(html: str) -> str:
@@ -558,16 +607,28 @@ def _extract_uni_url_from_daad(html: str) -> str:
 
 async def enrich_program(prog: ProgramDetail, profile) -> ProgramDetail:
     """
-    3 adımlı program zenginleştirme:
+    Program zenginleştirme — önce DB cache kontrol eder, scraping'i atlar.
 
-      Adım 1 — Tavily ile asıl başvuru sayfasını bul
-               (DAAD linkine değil, internette kendin ara)
-      Adım 2 — Sayfayı scrape et, Claude ile başvuru verisi çıkar
-      Adım 3 — Modulhandbuch PDF'ini ara, indir ve Claude ile oku;
-               eksik alanları tamamla
+      DB cache hit  → anında döner (token & zaman tasarrufu)
+      DB cache miss → 3 adımlı scraping:
+        Adım 1 — Tavily ile asıl başvuru sayfasını bul
+        Adım 2 — Sayfayı scrape et, Claude ile başvuru verisi çıkar
+        Adım 3 — Modulhandbuch PDF'ini ara, indir ve Claude ile oku
+      Scraping sonrası → DB'ye kaydet
     """
     if not prog.university:
         return evaluate_eligibility(profile, prog)
+
+    # ── DB cache kontrolü ─────────────────────────────────────────────
+    if prog.url:
+        cached = db.get_by_url(prog.url)
+        if cached:
+            console.print(
+                f"   💾 DB cache: {prog.university[:30]} — {prog.program[:25]}",
+                style="dim",
+            )
+            _apply_db_cache(prog, cached)
+            return evaluate_eligibility(profile, prog)
 
     # ── Adım 1: Tavily ile asıl program sayfasını bul ───────────────
     target_url = await find_program_page(prog.university, prog.program)
@@ -630,6 +691,13 @@ async def enrich_program(prog: ProgramDetail, profile) -> ProgramDetail:
     if result.confidence <= 0.2 and target_url:
         result.eligibility        = "veri_yok"
         result.eligibility_reason = "Sayfa tarandı fakat başvuru bilgileri çıkarılamadı"
+
+    # ── DB'ye kaydet (yeterli veri varsa) ────────────────────────────
+    if result.confidence > 0.3 and result.university:
+        try:
+            db.save_program(_prog_to_db_dict(result))
+        except Exception as e:
+            logging.debug(f"DB kayıt hatası ({result.university}): {e}")
 
     return result
 
