@@ -87,8 +87,9 @@ export default function StudentPage() {
   const [loading, setLoading]   = useState(true);
   const [running, setRunning]   = useState(false);
   const [log, setLog]           = useState("");
+  const [exitCode, setExitCode] = useState<number | null>(null);
   const [filter, setFilter]     = useState<string>("all");
-  const [expanded, setExpanded]   = useState<number | null>(null);
+  const [expanded, setExpanded]   = useState<string | null>(null);
   const [deleting, setDeleting]   = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -142,19 +143,34 @@ export default function StudentPage() {
   const runAgent = async (quick: boolean) => {
     setRunning(true);
     setLog("");
+    setExitCode(null);
 
     const url = `/api/students/${encodeURIComponent(name)}/run${quick ? "?quick=1" : ""}`;
     const res  = await fetch(url, { method: "POST" });
+
+    if (res.status === 409) {
+      setLog("⚠️ Araştırma zaten arka planda çalışıyor. Sayfa otomatik güncellenecek.");
+      setRunning(false);
+      fetchDetail();
+      return;
+    }
+
     const reader = res.body?.getReader();
     if (!reader) { setRunning(false); return; }
 
     const dec = new TextDecoder();
+    let lastExitCode: number | null = null;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      setLog((prev) => prev + stripAnsi(dec.decode(value)));
+      const chunk = stripAnsi(dec.decode(value));
+      // __EXIT_CODE__:N satırını yakala
+      const match = chunk.match(/__EXIT_CODE__:(\d+)/);
+      if (match) lastExitCode = parseInt(match[1], 10);
+      setLog((prev) => prev + chunk.replace(/__EXIT_CODE__:\d+\n?/, ""));
     }
 
+    setExitCode(lastExitCode);
     setRunning(false);
     fetchDetail(); // Sonuçları yenile
   };
@@ -378,8 +394,20 @@ export default function StudentPage() {
         <div className="bg-slate-900 rounded-xl overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700">
             <p className="text-xs font-medium text-slate-400">
-              {running ? "⚡ Ajan çalışıyor..." : "✅ Tamamlandı"}
+              {running
+                ? "⚡ Ajan çalışıyor..."
+                : exitCode === 0 || exitCode === null
+                  ? "✅ Tamamlandı"
+                  : `❌ Hata (çıkış kodu: ${exitCode})`}
             </p>
+            {!running && log && (
+              <button
+                onClick={() => { setLog(""); setExitCode(null); }}
+                className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                Temizle
+              </button>
+            )}
           </div>
           <div
             ref={logRef}
@@ -431,23 +459,25 @@ export default function StudentPage() {
                   <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs">Üniversite</th>
                   <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden md:table-cell">Program</th>
                   <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden sm:table-cell">Şehir</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden lg:table-cell">Dil</th>
                   <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs">Uygunluk</th>
                   <th className="px-4 py-3 text-xs"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtered.map((p, i) => {
+                {filtered.map((p) => {
                   const cfg = ELIGIBILITY_CONFIG[p.eligibility as keyof typeof ELIGIBILITY_CONFIG]
                     ?? ELIGIBILITY_CONFIG.veri_yok;
-                  const isExpanded = expanded === i;
+                  const rowKey = `${p.university}||${p.program}`;
+                  const isExpanded = expanded === rowKey;
                   const hasDetails = p.deadline_wise || p.deadline_sose || p.german_requirement
                     || p.english_requirement || p.nc_value || p.issues?.length || p.passed_checks?.length;
                   return (
                     <>
                       <tr
-                        key={i}
+                        key={rowKey}
                         className={`${cfg.row} transition-opacity ${hasDetails ? "cursor-pointer hover:opacity-90" : ""}`}
-                        onClick={() => hasDetails ? setExpanded(isExpanded ? null : i) : undefined}
+                        onClick={() => hasDetails ? setExpanded(isExpanded ? null : rowKey) : undefined}
                       >
                         <td className="px-4 py-3 font-medium text-slate-800 max-w-[160px] truncate">
                           {p.university || "—"}
@@ -457,6 +487,9 @@ export default function StudentPage() {
                         </td>
                         <td className="px-4 py-3 text-slate-500 text-xs hidden sm:table-cell">
                           {p.city || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-500 text-xs hidden lg:table-cell truncate max-w-[100px]">
+                          {p.language || "—"}
                         </td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${cfg.badge}`}>
@@ -483,8 +516,8 @@ export default function StudentPage() {
                         </td>
                       </tr>
                       {isExpanded && (
-                        <tr key={`${i}-detail`} className={cfg.row}>
-                          <td colSpan={5} className="px-4 pb-3">
+                        <tr key={`${rowKey}-detail`} className={cfg.row}>
+                          <td colSpan={6} className="px-4 pb-3">
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1.5 text-xs text-slate-600 pt-1 border-t border-slate-200/60">
                               {p.language && <span><span className="text-slate-400">Dil:</span> {p.language}</span>}
                               {p.deadline_wise && <span><span className="text-slate-400">WiSe:</span> {p.deadline_wise}</span>}

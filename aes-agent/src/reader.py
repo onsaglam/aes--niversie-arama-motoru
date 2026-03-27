@@ -424,7 +424,7 @@ def create_template(output_path: str | Path):
             ("Bölüm", ""),
             ("Not Ortalaması", "örn: 2.8 (DE) veya 3.2/4.0 (TR)"),
             ("Mezuniyet Tarihi", "örn: Haziran 2024"),
-            ("Diploma Durumu", "Alındı / Haziran 2025'te alınacak"),
+            ("Diploma Durumu", "Alındı / Haziran 2026'da alınacak"),
         ]),
         ("DİL BELGELERİ", [
             ("Almanca", "TestDaF 16 / DSH-2 / Goethe C1 / Yok"),
@@ -435,7 +435,7 @@ def create_template(output_path: str | Path):
             ("Derece Türü", "Master / Bachelor / Ausbildung"),
             ("Program Dili", "Almanca / İngilizce / Fark etmez"),
             ("Tercih Şehirler", "örn: München, Berlin veya Fark etmez"),
-            ("Başlangıç Dönemi", "WiSe 2025/26 / SoSe 2026"),
+            ("Başlangıç Dönemi", "SoSe 2026 / WiSe 2026/27 / SoSe 2027"),
         ]),
         ("TERCİHLER", [
             ("Ücretsiz/Düşük Ücret", "Önemli / Fark etmez"),

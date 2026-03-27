@@ -120,6 +120,14 @@ export default function DashboardPage() {
 
   useEffect(loadStudents, []);
 
+  // Çalışan öğrenci varsa 5 saniyede bir yenile
+  useEffect(() => {
+    const anyRunning = students.some((s) => s.isRunning);
+    if (!anyRunning) return;
+    const timer = setInterval(loadStudents, 5000);
+    return () => clearInterval(timer);
+  }, [students]);
+
   const filtered = students.filter((s) =>
     s.name.toLowerCase().includes(search.toLowerCase())
   );

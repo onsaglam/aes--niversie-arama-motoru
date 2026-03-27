@@ -7,7 +7,9 @@ interface Stats {
   total:        number;
   fresh:        number;
   stale:        number;
+  uni_count:    number;
   by_language:  { language: string; cnt: number }[];
+  by_degree:    { degree: string; cnt: number }[];
   by_source:    { source: string; cnt: number }[];
   top_unis:     { university: string; cnt: number }[];
   last_updated: string | null;
@@ -124,7 +126,7 @@ export default function ProgramsPage() {
         <StatCard label="Toplam Program"   value={stats?.total ?? 0} color="blue"   />
         <StatCard label="Güncel (≤30 gün)" value={stats?.fresh ?? 0} color="green"  />
         <StatCard label="Eski (>30 gün)"   value={stats?.stale ?? 0} color="yellow" />
-        <StatCard label="Üniversite Sayısı" value={stats?.top_unis?.length ?? 0} color="slate" />
+        <StatCard label="Üniversite Sayısı" value={stats?.uni_count ?? 0} color="slate" />
       </div>
 
       {noDb ? (
@@ -136,7 +138,7 @@ export default function ProgramsPage() {
           </p>
         </div>
       ) : (
-        <div className="grid sm:grid-cols-2 gap-4">
+        <div className="grid sm:grid-cols-3 gap-4">
 
           {/* Dil dağılımı */}
           <div className="bg-white rounded-xl border border-slate-200 p-4">
@@ -144,7 +146,7 @@ export default function ProgramsPage() {
             <div className="space-y-2">
               {stats?.by_language?.filter(l => l.language).map((l) => (
                 <div key={l.language} className="flex items-center gap-2">
-                  <div className="text-xs text-slate-600 w-36 truncate">{l.language}</div>
+                  <div className="text-xs text-slate-600 w-28 truncate">{l.language}</div>
                   <div className="flex-1 bg-slate-100 rounded-full h-2">
                     <div
                       className="bg-blue-500 h-2 rounded-full"
@@ -157,13 +159,35 @@ export default function ProgramsPage() {
             </div>
           </div>
 
+          {/* Derece dağılımı */}
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Derece Dağılımı</h3>
+            <div className="space-y-2">
+              {stats?.by_degree?.map((d) => (
+                <div key={d.degree} className="flex items-center gap-2">
+                  <div className="text-xs text-slate-600 w-28 truncate">{d.degree}</div>
+                  <div className="flex-1 bg-slate-100 rounded-full h-2">
+                    <div
+                      className="bg-purple-500 h-2 rounded-full"
+                      style={{ width: `${Math.round((d.cnt / (stats?.total || 1)) * 100)}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-slate-500 w-8 text-right">{d.cnt}</div>
+                </div>
+              ))}
+              {(!stats?.by_degree || stats.by_degree.length === 0) && (
+                <p className="text-xs text-slate-400">Veri yok</p>
+              )}
+            </div>
+          </div>
+
           {/* Top üniversiteler */}
           <div className="bg-white rounded-xl border border-slate-200 p-4">
             <h3 className="text-sm font-semibold text-slate-700 mb-3">En Fazla Program</h3>
             <div className="space-y-1">
               {stats?.top_unis?.slice(0, 8).map((u) => (
                 <div key={u.university} className="flex items-center justify-between text-xs">
-                  <span className="text-slate-700 truncate max-w-[200px]">{u.university}</span>
+                  <span className="text-slate-700 truncate max-w-[160px]">{u.university}</span>
                   <span className="text-slate-400 shrink-0 ml-2">{u.cnt}</span>
                 </div>
               ))}
@@ -212,8 +236,9 @@ export default function ProgramsPage() {
                 <tr className="border-b border-slate-200 bg-slate-50">
                   <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs">Üniversite</th>
                   <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden md:table-cell">Program</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden sm:table-cell">Dil</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden lg:table-cell">Dil Şartı</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden sm:table-cell">Şehir</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden lg:table-cell">Dil</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden xl:table-cell">Dil Şartı</th>
                   <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs">Güncellik</th>
                 </tr>
               </thead>
@@ -235,9 +260,12 @@ export default function ProgramsPage() {
                         {p.program || "—"}
                       </td>
                       <td className="px-4 py-2.5 text-slate-500 hidden sm:table-cell text-xs">
+                        {p.city || "—"}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-500 hidden lg:table-cell text-xs">
                         {p.language || "—"}
                       </td>
-                      <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-slate-500">
+                      <td className="px-4 py-2.5 hidden xl:table-cell text-xs text-slate-500">
                         {p.german_requirement || p.english_requirement || "—"}
                       </td>
                       <td className="px-4 py-2.5">

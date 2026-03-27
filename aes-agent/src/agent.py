@@ -617,7 +617,10 @@ async def enrich_program(prog: ProgramDetail, profile) -> ProgramDetail:
       Scraping sonrası → DB'ye kaydet
     """
     if not prog.university:
-        return evaluate_eligibility(profile, prog)
+        # Üniversite adı bilinmiyor — değerlendirme yapılamaz
+        prog.eligibility        = "veri_yok"
+        prog.eligibility_reason = "Üniversite adı bilinmiyor — kaynak sadece referans"
+        return prog
 
     # ── DB cache kontrolü ─────────────────────────────────────────────
     if prog.url:

@@ -179,7 +179,7 @@ export default function EditProfilePage() {
             </Field>
             <div className="col-span-2">
               <Field label="Diploma Durumu">
-                <Select field="diploma_status" options={["", "Alındı", "Haziran 2025'te alınacak", "Ocak 2026'da alınacak", "Devam ediyor"]} />
+                <Select field="diploma_status" options={["", "Alındı", "Haziran 2026'da alınacak", "Ocak 2027'de alınacak", "Haziran 2027'de alınacak", "Devam ediyor"]} />
               </Field>
             </div>
           </div>

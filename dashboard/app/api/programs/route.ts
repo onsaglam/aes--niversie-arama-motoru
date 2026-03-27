@@ -44,16 +44,22 @@ export async function GET(req: Request) {
     const by_source   = db.prepare(
       "SELECT source, COUNT(*) cnt FROM programs GROUP BY source ORDER BY cnt DESC"
     ).all();
+    const by_degree   = db.prepare(
+      "SELECT degree, COUNT(*) cnt FROM programs WHERE degree IS NOT NULL AND degree != '' GROUP BY degree ORDER BY cnt DESC"
+    ).all();
     const top_unis    = db.prepare(
       "SELECT university, COUNT(*) cnt FROM programs GROUP BY university ORDER BY cnt DESC LIMIT 15"
     ).all();
+    const uni_count   = (db.prepare("SELECT COUNT(DISTINCT university) as cnt FROM programs").get() as { cnt: number }).cnt;
     const last_updated = (db.prepare("SELECT MAX(updated_at) as ts FROM programs").get() as { ts: string | null }).ts;
 
     return NextResponse.json({
       total,
       fresh:        freshness?.fresh  ?? 0,
       stale:        freshness?.stale  ?? 0,
+      uni_count,
       by_language,
+      by_degree,
       by_source,
       top_unis,
       last_updated,
