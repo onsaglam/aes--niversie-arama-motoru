@@ -1,0 +1,41 @@
+# API Anahtarları — ASLA commit etme
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+aes-agent/venv/
+aes-agent/.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Önbellek ve loglar (büyük, gereksiz)
+aes-agent/cache/
+aes-agent/logs/
+
+# Öğrenci verileri — gizlilik
+aes-agent/ogrenciler/*/transkript.pdf
+aes-agent/ogrenciler/*/dil_belgesi.pdf
+aes-agent/ogrenciler/*/pasaport*
+aes-agent/ogrenciler/*/arastirma_*.json
+aes-agent/ogrenciler/*/sonuc_raporu_*.docx
+aes-agent/ogrenciler/*/universite_listesi_*.xlsx
+
+# Dashboard — build ve bağımlılıklar
+dashboard/node_modules/
+dashboard/.next/
+dashboard/.env.local
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# ZIP yedekler
+*.zip

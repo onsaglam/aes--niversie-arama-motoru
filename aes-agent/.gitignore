@@ -1,0 +1,23 @@
+# API anahtarları — ASLA commit etme
+.env
+
+# Python sanal ortam
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+
+# Önbellek ve loglar
+cache/
+logs/
+
+# Öğrenci verileri (kişisel veri)
+ogrenciler/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
