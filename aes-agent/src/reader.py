@@ -148,11 +148,19 @@ def read_profile(student_folder: str | Path) -> StudentProfile:
     folder = Path(student_folder)
     profile = StudentProfile()
 
-    # 1. Word profil dosyası
+    # 1. Dashboard'dan kaydedilen JSON profil (öncelikli — en güncel veri)
+    json_path = folder / "profil.json"
+    if json_path.exists():
+        try:
+            profile = _read_json(json_path)
+        except Exception:
+            pass
+
+    # 2. Word profil dosyası (JSON yoksa veya JSON'da eksik alanlar için)
     docx_path = folder / "profil.docx"
-    if docx_path.exists() and Document:
+    if docx_path.exists() and Document and not json_path.exists():
         profile = _read_docx(docx_path)
-    elif not docx_path.exists():
+    elif not docx_path.exists() and not json_path.exists():
         pass  # Profil dosyası yoksa klasör adını isim olarak kullan
 
     # 2. Belge varlık kontrolü
@@ -193,7 +201,20 @@ def read_profile(student_folder: str | Path) -> StudentProfile:
         except Exception:
             pass
 
-    # 5. GPA Almanya skalasına dönüşüm
+    # 5. Program dili otomatik tespiti (danışman boş bırakmışsa sertifikadan türet)
+    #    Kural: Sadece Almanca sertifika → Almanca program
+    #           Sadece İngilizce sertifika → İngilizce program
+    #           Her ikisi → profil.docx'teki tercih korunur
+    if not profile.program_language or profile.program_language.lower() in ("fark etmez", "any", ""):
+        has_german  = bool(profile.german_level  and profile.german_level.lower()  not in ("yok", "none", ""))
+        has_english = bool(profile.english_level and profile.english_level.lower() not in ("yok", "none", ""))
+        if has_german and not has_english:
+            profile.program_language = "Almanca"
+        elif has_english and not has_german:
+            profile.program_language = "İngilizce"
+        # İkisi de varsa veya ikisi de yoksa → boş bırak (her ikisini de ara)
+
+    # 6. GPA Almanya skalasına dönüşüm
     gpa_raw = profile.gpa_german or profile.gpa_turkish or ""
     gpa_float = convert_to_german_scale(gpa_raw)
     if gpa_float:
@@ -205,6 +226,28 @@ def read_profile(student_folder: str | Path) -> StudentProfile:
     if not profile.name:
         profile.name = folder.name.replace("_", " ")
 
+    return profile
+
+
+# ─── JSON okuma (dashboard'dan kaydedilen profil) ────────────────────────────
+
+def _read_json(path: Path) -> StudentProfile:
+    """Dashboard'dan kaydedilen profil.json'u oku."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    profile = StudentProfile()
+    for key, value in data.items():
+        if hasattr(profile, key) and value is not None:
+            if key == "preferred_cities":
+                # String veya list kabul et
+                if isinstance(value, str):
+                    cities = [c.strip() for c in value.replace("،", ",").split(",") if c.strip()]
+                    profile.preferred_cities = cities
+                elif isinstance(value, list):
+                    profile.preferred_cities = value
+            elif key in ("free_tuition_important", "accept_nc", "conditional_admission"):
+                profile.__dict__[key] = bool(value)
+            else:
+                setattr(profile, key, value)
     return profile
 
 

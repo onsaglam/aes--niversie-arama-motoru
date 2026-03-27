@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Play, Zap, Download, ExternalLink,
   CheckCircle2, AlertTriangle, XCircle, HelpCircle,
-  FileText, FileSpreadsheet,
+  FileText, FileSpreadsheet, Pencil,
 } from "lucide-react";
 
 interface Program {
@@ -120,8 +120,15 @@ export default function StudentPage() {
           )}
         </div>
 
-        {/* Çalıştır butonları */}
+        {/* Butonlar */}
         <div className="flex gap-2 shrink-0">
+          <Link
+            href={`/students/${encodeURIComponent(name)}/edit`}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium
+                       border border-slate-200 text-slate-700 hover:bg-slate-50"
+          >
+            <Pencil className="w-4 h-4" /> Profil Düzenle
+          </Link>
           <button
             onClick={() => runAgent(true)}
             disabled={running}

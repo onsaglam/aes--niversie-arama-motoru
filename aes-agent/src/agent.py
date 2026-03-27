@@ -179,6 +179,43 @@ _ELIGIBILITY_LABEL = {"uygun": "✅ Uygun", "sartli": "⚠️ Şartlı", "uygun_
 _ELIGIBILITY_ORDER = {"uygun": 0, "sartli": 1, "uygun_degil": 2, "veri_yok": 3, "taranmadi": 4}
 
 
+# ─── Özel Üniversite Filtresi ─────────────────────────────────────────────────
+# Almanya'daki özel (private) üniversiteler — AES SADECE devlet üniversitelerini araştırır.
+# Kaynak: HRK (Hochschulrektorenkonferenz) özel üniversite listesi
+
+_PRIVATE_UNIVERSITIES: frozenset[str] = frozenset({
+    # Uluslararası tanınan özel üniversiteler
+    "jacobs", "constructor", "bucerius", "hertie", "escp", "esmt",
+    "ebs", "whu", "hhl", "ism international", "munich business school",
+    "frankfurt school", "frankfurt school of finance",
+    # SRH Grubu
+    "srh", "srh hochschule", "srh berlin", "srh heidelberg",
+    "srh fernhochschule", "mobile university",
+    # IU Grubu
+    "iu international", "iu internationale", "iu fernstudium",
+    # Fresenius / Hochschule Fresenius
+    "fresenius", "hochschule fresenius",
+    # Diğer büyük özel üniversiteler
+    "steinbeis", "macromedia", "code university", "bsp business",
+    "quadriga", "touro", "msb medical", "medical school berlin",
+    "euro-fh", "fernakademie", "akad", "iubh", "fom hochschule",
+    "hamburger fern", "wings", "apollon", "diploma hochschule",
+    "allensbach", "sgd", "fernschule",
+    # Özel Fachhochschule'ler
+    "international school of management", "university of europe",
+    "europe university of applied sciences", "eu business",
+    "new european college", "bwl hochschule", "pfh private",
+    "nordakademie", "ba sachsen", "berufsakademie sachsen",
+    "hfwu nürtingen",  # yarı-özel
+})
+
+
+def _is_private_university(university_name: str) -> bool:
+    """Üniversitenin özel (private) olup olmadığını kontrol et."""
+    name_lower = university_name.lower()
+    return any(keyword in name_lower for keyword in _PRIVATE_UNIVERSITIES)
+
+
 # ─── DAAD API Araması ─────────────────────────────────────────────────────────
 
 async def search_programs_daad(profile) -> list[ProgramDetail]:
@@ -208,8 +245,14 @@ async def search_programs_daad(profile) -> list[ProgramDetail]:
 
         for item in courses[:50]:
             langs = item.get("languages") or []
+            uni_name = item.get("academy", "")
 
-            # Dil filtresi — tercihe göre
+            # Özel üniversite filtresi — sadece devlet üniversiteleri
+            if _is_private_university(uni_name):
+                logging.info(f"Özel üniversite atlandı: {uni_name}")
+                continue
+
+            # Dil filtresi — sertifikaya göre kilitli
             if preferred_lang and preferred_lang not in langs:
                 continue
 
