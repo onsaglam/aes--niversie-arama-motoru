@@ -43,7 +43,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ name: s
 
   // Mevcut belgeler
   const documents = {
-    profil: fs.existsSync(path.join(folder, "profil.docx")),
+    profil: fs.existsSync(path.join(folder, "profil.docx")) || fs.existsSync(path.join(folder, "profil.json")),
     transkript: fs.existsSync(path.join(folder, "transkript.pdf")),
     dilBelgesi: fs.existsSync(path.join(folder, "dil_belgesi.pdf")),
     motivasyon: fs.existsSync(path.join(folder, "motivasyon.docx")),
@@ -51,4 +51,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ name: s
   };
 
   return NextResponse.json({ name, programs, lastRun, reports, documents });
+}
+
+export async function DELETE(_req: Request, { params }: { params: Promise<{ name: string }> }) {
+  const { name } = await params;
+  const folder = path.join(STUDENTS_DIR, name);
+
+  if (!fs.existsSync(folder)) {
+    return NextResponse.json({ error: "Öğrenci bulunamadı" }, { status: 404 });
+  }
+
+  fs.rmSync(folder, { recursive: true, force: true });
+  return NextResponse.json({ ok: true });
 }

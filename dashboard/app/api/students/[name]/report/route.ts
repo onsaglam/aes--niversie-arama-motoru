@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
-const STUDENTS_DIR = path.resolve(__dirname, "../../../../../../../aes-agent/ogrenciler");
+const STUDENTS_DIR = path.resolve(process.cwd(), "../aes-agent/ogrenciler");
 
 export async function GET(req: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;

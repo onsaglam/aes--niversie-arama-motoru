@@ -41,8 +41,6 @@ export async function POST(
 function getEmptyProfile(name: string) {
   return {
     name: name.replace(/_/g, " "),
-    email: "",
-    phone: "",
     nationality: "Türk",
     current_university: "",
     department: "",

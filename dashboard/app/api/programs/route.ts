@@ -5,9 +5,9 @@ import fs from "fs";
 
 const DB_PATH = path.resolve(process.cwd(), "../aes-agent/programs.db");
 
-function getDb() {
+function getDb(readonly = true) {
   if (!fs.existsSync(DB_PATH)) return null;
-  return new Database(DB_PATH, { readonly: true });
+  return new Database(DB_PATH, { readonly });
 }
 
 export async function GET(req: Request) {
@@ -58,6 +58,20 @@ export async function GET(req: Request) {
       top_unis,
       last_updated,
     });
+  } finally {
+    db.close();
+  }
+}
+
+// Eski (30+ gün) kayıtları sil
+export async function DELETE() {
+  const db = getDb(false);
+  if (!db) return NextResponse.json({ deleted: 0 });
+  try {
+    const result = db.prepare(
+      "DELETE FROM programs WHERE last_scraped < datetime('now', '-30 days')"
+    ).run();
+    return NextResponse.json({ deleted: result.changes });
   } finally {
     db.close();
   }

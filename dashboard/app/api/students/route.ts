@@ -67,18 +67,85 @@ export async function GET() {
 
     const students: StudentSummary[] = folders.map((name) => {
       const folder = path.join(STUDENTS_DIR, name);
+      let field = "";
+      let degreeType = "";
+      try {
+        const profilePath = path.join(folder, "profil.json");
+        if (fs.existsSync(profilePath)) {
+          const p = JSON.parse(fs.readFileSync(profilePath, "utf-8"));
+          field = p.desired_field ?? "";
+          degreeType = p.degree_type ?? "";
+        }
+      } catch { /* ignore */ }
       return {
         name,
-        hasProfile: fs.existsSync(path.join(folder, "profil.docx")),
+        hasProfile: fs.existsSync(path.join(folder, "profil.docx")) || fs.existsSync(path.join(folder, "profil.json")),
         hasResults: fs.readdirSync(folder).some((f) => f.startsWith("arastirma_")),
         lastRun: getLastRunDate(folder),
         stats: parseResultsJson(folder),
-        field: "",
-        degreeType: "",
+        field,
+        degreeType,
       };
     });
 
+    // Son araştırma tarihine göre sırala (en yeni üstte), araştırılmayanlar sona
+    students.sort((a, b) => {
+      if (a.lastRun && b.lastRun) return b.lastRun.localeCompare(a.lastRun);
+      if (a.lastRun) return -1;
+      if (b.lastRun) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
     return NextResponse.json(students);
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const { name } = await req.json() as { name: string };
+
+    // Ad doğrulama: sadece harf, rakam, boşluk, tire, alt çizgi
+    if (!name || !/^[\w\s\-çÇğĞıİöÖşŞüÜ]+$/.test(name) || name.length > 60) {
+      return NextResponse.json({ error: "Geçersiz isim" }, { status: 400 });
+    }
+
+    // Klasör adı: boşlukları alt çizgiye çevir
+    const folderName = name.trim().replace(/\s+/g, "_");
+    const folder = path.join(STUDENTS_DIR, folderName);
+
+    if (fs.existsSync(folder)) {
+      return NextResponse.json({ error: "Bu isimde öğrenci zaten var" }, { status: 409 });
+    }
+
+    fs.mkdirSync(folder, { recursive: true });
+
+    // Boş profil.json oluştur
+    const emptyProfile = {
+      name: name.trim(),
+      nationality: "Türk",
+      current_university: "",
+      department: "",
+      gpa_turkish: "",
+      graduation_date: "",
+      diploma_status: "",
+      german_level: "",
+      english_level: "",
+      desired_field: "",
+      degree_type: "Master",
+      program_language: "",
+      preferred_cities: "",
+      start_semester: "",
+      free_tuition_important: true,
+      university_type: "",
+      accept_nc: true,
+      conditional_admission: true,
+      advisor_notes: "",
+    };
+    fs.writeFileSync(path.join(folder, "profil.json"), JSON.stringify(emptyProfile, null, 2), "utf-8");
+
+    return NextResponse.json({ ok: true, folderName });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

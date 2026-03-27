@@ -758,7 +758,8 @@ async def run_agent(student_folder: str, quick: bool = False):
     console.print("\n[1/5] 📖 Profil okunuyor...")
     profile = read_profile(folder)
     if not profile.desired_field:
-        console.print("[red]Hata: profil.docx'te 'İstenen Alan' boş.[/red]")
+        console.print("[red]Hata: Profil 'İstenen Alan / Bölüm' alanı boş.[/red]")
+        console.print("[yellow]Lütfen dashboard'dan profil düzenle → 'Hedef' bölümünü doldur.[/yellow]")
         return
     console.print(f"      ✅ {profile.name} — {profile.desired_field} ({profile.degree_type})")
     if profile.gpa_german_float:
@@ -812,11 +813,24 @@ async def run_agent(student_folder: str, quick: bool = False):
     log_file = folder / f"arastirma_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
     with open(log_file, "w", encoding="utf-8") as f:
         json.dump([{
-            "university":  p.university,
-            "program":     p.program,
-            "city":        p.city,
-            "eligibility": p.eligibility,
-            "url":         p.url,
+            "university":           p.university,
+            "program":              p.program,
+            "city":                 p.city,
+            "language":             p.language,
+            "degree":               p.degree,
+            "eligibility":          p.eligibility,
+            "eligibility_reason":   p.eligibility_reason,
+            "issues":               p.issues,
+            "passed_checks":        p.passed_checks,
+            "deadline_wise":        p.deadline_wise,
+            "deadline_sose":        p.deadline_sose,
+            "german_requirement":   p.german_requirement,
+            "english_requirement":  p.english_requirement,
+            "nc_value":             p.nc_value,
+            "uni_assist_required":  p.uni_assist_required,
+            "conditional_admission":p.conditional_admission,
+            "confidence":           round(p.confidence, 2),
+            "url":                  p.url,
         } for p in final_programs], f, ensure_ascii=False, indent=2)
 
     # ── Özet ───────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Database, RefreshCw, Clock, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Database, Clock, CheckCircle2, AlertTriangle, Trash2 } from "lucide-react";
 
 interface Stats {
   total:        number;
@@ -35,8 +35,10 @@ export default function ProgramsPage() {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [search,   setSearch]   = useState("");
   const [loading,  setLoading]  = useState(true);
+  const [cleaning, setCleaning] = useState(false);
 
-  useEffect(() => {
+  const loadData = () => {
+    setLoading(true);
     Promise.all([
       fetch("/api/programs").then((r) => r.json()),
       fetch("/api/programs?mode=list&limit=500").then((r) => r.json()),
@@ -45,7 +47,19 @@ export default function ProgramsPage() {
       setPrograms(l.rows ?? []);
       setLoading(false);
     });
-  }, []);
+  };
+
+  useEffect(loadData, []);
+
+  const handleCleanStale = async () => {
+    if (!confirm("30 günden eski program kayıtları silinecek. Devam edilsin mi?")) return;
+    setCleaning(true);
+    const res = await fetch("/api/programs", { method: "DELETE" });
+    const data = await res.json();
+    setCleaning(false);
+    alert(`${data.deleted} eski kayıt silindi.`);
+    loadData();
+  };
 
   const filtered = programs.filter((p) => {
     if (!search) return true;
@@ -82,7 +96,20 @@ export default function ProgramsPage() {
             </p>
           </div>
         </div>
-        <Link href="/" className="text-sm text-slate-500 hover:text-blue-600">← Öğrenciler</Link>
+        <div className="flex items-center gap-3">
+          {(stats?.stale ?? 0) > 0 && (
+            <button
+              onClick={handleCleanStale}
+              disabled={cleaning}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                         border border-amber-200 text-amber-600 hover:bg-amber-50 disabled:opacity-50 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {cleaning ? "Siliniyor..." : `${stats!.stale} eski kaydı temizle`}
+            </button>
+          )}
+          <Link href="/" className="text-sm text-slate-500 hover:text-blue-600">← Öğrenciler</Link>
+        </div>
       </div>
 
       {/* İstatistik kartları */}

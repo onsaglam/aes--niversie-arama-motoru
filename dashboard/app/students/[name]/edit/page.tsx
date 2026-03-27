@@ -31,7 +31,7 @@ const ENGLISH_LEVELS = ["", "Yok", "B2", "C1", "C2", "IELTS 5.5", "IELTS 6.0", "
 const DEGREE_TYPES = ["Master", "Bachelor", "PhD", "Ausbildung"];
 const PROGRAM_LANGUAGES = ["", "Almanca", "İngilizce", "Her İkisi"];
 const UNIVERSITY_TYPES = ["", "TU (Teknik Üniversite)", "FH (Fachhochschule)", "Volluniversität", "Fark etmez"];
-const START_SEMESTERS = ["", "WiSe 2025/26", "SoSe 2026", "WiSe 2026/27", "SoSe 2027"];
+const START_SEMESTERS = ["", "SoSe 2026", "WiSe 2026/27", "SoSe 2027", "WiSe 2027/28", "SoSe 2028"];
 
 export default function EditProfilePage() {
   const params = useParams();
