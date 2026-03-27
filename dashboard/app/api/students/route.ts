@@ -19,6 +19,7 @@ export interface StudentSummary {
   } | null;
   field: string;
   degreeType: string;
+  startSemester: string;
 }
 
 function parseResultsJson(folder: string): StudentSummary["stats"] | null {
@@ -70,12 +71,14 @@ export async function GET() {
       const folder = path.join(STUDENTS_DIR, name);
       let field = "";
       let degreeType = "";
+      let startSemester = "";
       try {
         const profilePath = path.join(folder, "profil.json");
         if (fs.existsSync(profilePath)) {
           const p = JSON.parse(fs.readFileSync(profilePath, "utf-8"));
           field = p.desired_field ?? "";
           degreeType = p.degree_type ?? "";
+          startSemester = p.start_semester ?? "";
         }
       } catch { /* ignore */ }
       // .running dosyası varsa ve 2 saatten yeni ise ajan çalışıyordur
@@ -94,6 +97,7 @@ export async function GET() {
         stats: parseResultsJson(folder),
         field,
         degreeType,
+        startSemester,
       };
     });
 

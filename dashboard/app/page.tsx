@@ -12,6 +12,7 @@ interface StudentSummary {
   isRunning: boolean;
   field: string;
   degreeType: string;
+  startSemester: string;
   stats: {
     total: number;
     uygun: number;
@@ -247,10 +248,13 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {/* Alan + Derece */}
-                {(s.field || s.degreeType) && (
+                {/* Alan + Derece + Dönem */}
+                {(s.field || s.degreeType || s.startSemester) && (
                   <p className="text-xs text-slate-500 mb-2 truncate">
                     {[s.degreeType, s.field].filter(Boolean).join(" · ")}
+                    {s.startSemester && (
+                      <span className="ml-1.5 text-slate-400">· {s.startSemester}</span>
+                    )}
                   </p>
                 )}
 

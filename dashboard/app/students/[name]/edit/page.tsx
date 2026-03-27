@@ -27,6 +27,42 @@ interface Profile {
 }
 
 const GERMAN_LEVELS = ["", "Yok", "A1", "A2", "B1", "B2", "Goethe B2", "Goethe C1", "Goethe C2", "telc B2", "telc C1", "DSH-1", "DSH-2", "DSH-3", "TestDaF 12", "TestDaF 14", "TestDaF 16", "TestDaF 18", "TestDaF 20"];
+
+// GPA → Almanya skalası dönüşümü (istemci taraflı önizleme)
+function _tr100To40(g: number): number {
+  if (g >= 90) return 4.0;
+  if (g >= 85) return 3.7;
+  if (g >= 80) return 3.3;
+  if (g >= 75) return 3.0;
+  if (g >= 70) return 2.7;
+  if (g >= 65) return 2.3;
+  if (g >= 60) return 2.0;
+  if (g >= 55) return 1.7;
+  if (g >= 50) return 1.3;
+  return 1.0;
+}
+function convertGpaToGerman(raw: string): string | null {
+  const s = raw.trim().replace(",", ".");
+  const m1 = s.match(/^([\d.]+)\s*\/\s*([\d.]+)$/);
+  if (m1) {
+    const v = parseFloat(m1[1]), sc = parseFloat(m1[2]);
+    if (isNaN(v) || isNaN(sc) || sc === 0) return null;
+    if (sc === 4 || sc === 4.0) {
+      const de = 1.0 + 3.0 * (4.0 - v) / 3.0;
+      return de >= 1 && de <= 5 ? de.toFixed(1) : null;
+    }
+    if (sc === 100) {
+      const de = 1.0 + 3.0 * (4.0 - _tr100To40(v)) / 3.0;
+      return de >= 1 && de <= 5 ? de.toFixed(1) : null;
+    }
+  }
+  const m2 = s.match(/^([\d.]+)\s*(?:\(DE\))?$/i);
+  if (m2) {
+    const v = parseFloat(m2[1]);
+    if (!isNaN(v) && v >= 1.0 && v <= 5.0) return v.toFixed(1);
+  }
+  return null;
+}
 const ENGLISH_LEVELS = ["", "Yok", "B2", "C1", "C2", "IELTS 5.5", "IELTS 6.0", "IELTS 6.5", "IELTS 7.0", "IELTS 7.5", "IELTS 8.0", "TOEFL 72", "TOEFL 80", "TOEFL 88", "TOEFL 100", "TOEFL 110", "Cambridge B2", "Cambridge C1", "Cambridge C2"];
 const DEGREE_TYPES = ["Master", "Bachelor", "PhD", "Ausbildung"];
 const PROGRAM_LANGUAGES = ["", "Almanca", "İngilizce", "Her İkisi"];
@@ -173,6 +209,19 @@ export default function EditProfilePage() {
             </Field>
             <Field label="Not Ortalaması" help="örn: 3.2/4.0 veya 75/100 veya 2.5 (DE)">
               <Input field="gpa_turkish" placeholder="3.2/4.0" />
+              {profile.gpa_turkish && (() => {
+                const de = convertGpaToGerman(profile.gpa_turkish);
+                return de ? (
+                  <p className="text-xs mt-1 text-blue-600 font-medium">
+                    ≈ {de} (Almanya skalası){" "}
+                    <span className="font-normal text-slate-400">
+                      {parseFloat(de) <= 2.0 ? "· Sehr gut" : parseFloat(de) <= 2.5 ? "· Gut" : parseFloat(de) <= 3.5 ? "· Befriedigend" : "· Ausreichend"}
+                    </span>
+                  </p>
+                ) : (
+                  <p className="text-xs mt-1 text-slate-400">Format: 3.2/4.0 veya 75/100 veya 2.5 (DE)</p>
+                );
+              })()}
             </Field>
             <Field label="Mezuniyet Tarihi">
               <Input field="graduation_date" placeholder="Haziran 2025" />

@@ -999,6 +999,7 @@ async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
             "conditional_admission":p.conditional_admission,
             "confidence":           round(p.confidence, 2),
             "url":                  p.url,
+            "notes":                p.notes or None,
         } for p in final_programs], f, ensure_ascii=False, indent=2)
 
     # ── Özet ───────────────────────────────────────────────────────────

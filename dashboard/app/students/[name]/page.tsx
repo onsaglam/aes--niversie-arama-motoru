@@ -386,6 +386,16 @@ export default function StudentPage() {
                     <span>{profile.start_semester}</span>
                   </div>
                 )}
+                {profile.advisor_notes && (
+                  <div className="mt-2 pt-2 border-t border-slate-100">
+                    <p className="text-slate-400 mb-0.5">Notlar:</p>
+                    <p className="text-slate-600 leading-relaxed whitespace-pre-line">
+                      {profile.advisor_notes.length > 150
+                        ? profile.advisor_notes.slice(0, 150) + "…"
+                        : profile.advisor_notes}
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               <p className="text-xs text-slate-400">Profil yükleniyor...</p>
