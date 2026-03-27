@@ -59,7 +59,7 @@ class ProgramDetail:
 
 # ─── HTML → Metin ─────────────────────────────────────────────────────────────
 
-def html_to_text(html: str, max_chars: int = 8000) -> str:
+def html_to_text(html: str, max_chars: int = 10000) -> str:
     """HTML'den okunabilir, temiz metin çıkar. Başvuru ile ilgili bölümleri önceliklendir."""
     if not BS4_OK:
         text = re.sub(r"<[^>]+>", " ", html)
@@ -70,24 +70,41 @@ def html_to_text(html: str, max_chars: int = 8000) -> str:
 
     # Gereksiz elementleri kaldır
     for tag in soup(["script", "style", "nav", "footer", "header",
-                     "aside", "noscript", "iframe", "img", "svg"]):
+                     "aside", "noscript", "iframe", "img", "svg", "form"]):
         tag.decompose()
 
-    # Başvuru ile ilgili bölümleri önce al
+    # Başvuru ile ilgili bölümleri önce al — geniş seçici listesi
     priority_selectors = [
-        "main", "article", "#content", ".content",
-        ".bewerbung", ".admission", ".studium",
-        "[class*='application']", "[class*='admission']",
-        "[id*='application']", "[id*='zulassung']",
-        "[id*='bewerbung']",
+        # Genel içerik alanları
+        "main", "article", "#content", ".content", "#main-content",
+        # Almanca başvuru anahtar kelimeleri
+        ".bewerbung", ".zulassung", ".studium", "#bewerbung", "#zulassung",
+        "[class*='bewerbung']", "[class*='zulassung']", "[class*='admission']",
+        "[id*='bewerbung']", "[id*='zulassung']", "[id*='application']",
+        # İngilizce başvuru anahtar kelimeleri
+        "[class*='application']", "[class*='requirement']", "[class*='deadline']",
+        "[id*='requirement']", "[id*='deadline']",
+        # Tablo ve liste içerikleri (şart tabloları)
+        "table", ".requirements", ".prerequisites",
     ]
+    seen_text: set[str] = set()
     sections = []
     for sel in priority_selectors:
-        el = soup.select_one(sel)
-        if el:
-            sections.append(el.get_text(" ", strip=True))
+        for el in soup.select(sel)[:2]:  # Her seçici için en fazla 2 element
+            t = el.get_text(" ", strip=True)
+            if len(t) > 100 and t not in seen_text:
+                sections.append(t)
+                seen_text.add(t)
+                if sum(len(s) for s in sections) >= max_chars:
+                    break
+        if sum(len(s) for s in sections) >= max_chars:
+            break
 
-    text = " ".join(sections) if sections else soup.get_text(" ", strip=True)
+    if not sections:
+        text = soup.get_text(" ", strip=True)
+    else:
+        text = " ".join(sections)
+
     text = re.sub(r"\s+", " ", text).strip()
     return text[:max_chars]
 
@@ -106,16 +123,16 @@ SADECE aşağıdaki JSON'u döndür, başka hiçbir metin ekleme:
   "city": "şehir adı veya null",
   "degree": "Bachelor/Master/PhD veya null",
   "language": "Almanca/İngilizce/Her İkisi veya null",
-  "deadline_wise": "Kış dönemi başvuru son tarihi DD.MM.YYYY veya 'DD. Monat' formatında veya null",
-  "deadline_sose": "Yaz dönemi başvuru son tarihi veya null",
-  "german_requirement": "TestDaF 16 / DSH-2 / Goethe C1 vb. veya null",
-  "english_requirement": "IELTS 6.5 / TOEFL 88 vb. veya null",
-  "nc_value": "sayısal değer örn 2.3 veya 'zulassungsfrei' veya null",
-  "min_gpa": null,
-  "uni_assist_required": false,
-  "conditional_admission": false,
-  "required_documents": [],
-  "notes": "kritik notlar veya null"
+  "deadline_wise": "Kış dönemi başvuru son tarihi — tam formatta: DD.MM.YYYY veya 'DD. Monat YYYY' veya '01. Oktober' vb. veya null",
+  "deadline_sose": "Yaz dönemi başvuru son tarihi — aynı format veya null",
+  "german_requirement": "Almanca dil şartı — tam olarak: 'TestDaF 16' veya 'DSH-2' veya 'Goethe-Zertifikat C1' vb. veya null",
+  "english_requirement": "İngilizce dil şartı — tam olarak: 'IELTS 6.5' veya 'TOEFL iBT 88' vb. veya null",
+  "nc_value": "NC sayısal değer örn '2.3' veya 'zulassungsfrei' (kısıtsız) veya null",
+  "min_gpa": "minimum not ortalaması Almanya skalasında sayısal değer (1.0-5.0) veya null",
+  "uni_assist_required": "uni-assist.de üzerinden başvuru gerekiyorsa true, aksi false",
+  "conditional_admission": "Bedingte Zulassung / şartlı kabul mevcut ise true, aksi false",
+  "required_documents": ["gerekli belgeler listesi — motivasyon mektubu, CV, transkript vb."],
+  "notes": "Dikkat çekici özel şartlar, kısıtlamalar, önemli bilgiler (max 150 karakter) veya null"
 }}"""
 
 

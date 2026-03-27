@@ -954,23 +954,38 @@ async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
 
     console.print(f"\n      Toplam {len(all_programs)} benzersiz program bulundu")
 
-    # ── 4. Detay çekme — sıralı (rate limit güvenliği için) ───────────
-    to_enrich = all_programs[:20] if not quick else all_programs[:10]
+    # ── 4. Detay çekme — DB cache hitleri hızlı, scraping sıralı ────────
+    # DB önbelleğinden direkt yüklenen programları hızla değerlendir —
+    # bunlar zaten tüm alanlara sahip, tekrar scraping gerekmez.
+    db_ready   = [p for p in all_programs if p.sources == ["db_cache"] and p.eligibility == ""]
+    need_scrape = [p for p in all_programs if p.sources != ["db_cache"] or p.eligibility != ""]
+
+    # DB-ready programları direkt uygunluk değerlendirmesine gönder
+    fast_enriched = []
+    for p in db_ready:
+        fast_enriched.append(evaluate_eligibility(profile, p))
+    if fast_enriched:
+        console.print(f"\n      ⚡ DB önbelleğinden {len(fast_enriched)} program hızla değerlendirildi", style="dim")
+
+    # Scraping gerektiren programlar
+    limit      = 20 if not quick else 10
+    to_enrich  = need_scrape[:limit]
     console.print(f"\n[4/5] 🕷️  {len(to_enrich)} program için detay alınıyor...")
 
-    enriched = []
+    scraped = []
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
                   BarColumn(), console=console) as progress:
         task = progress.add_task("Taranıyor...", total=len(to_enrich))
         for p in to_enrich:
             result = await enrich_program(p, profile)
-            enriched.append(result)
+            scraped.append(result)
             progress.advance(task)
 
-    for p in all_programs[len(to_enrich):]:
+    for p in need_scrape[len(to_enrich):]:
         p.eligibility        = "taranmadi"
         p.eligibility_reason = "Detay sayfası bu çalışmada taranmadı"
-    final_programs = enriched + all_programs[len(to_enrich):]
+
+    final_programs = scraped + fast_enriched + need_scrape[len(to_enrich):]
 
     # ── 5. Rapor üret ──────────────────────────────────────────────────
     console.print("\n[5/5] 📊 Raporlar oluşturuluyor...")

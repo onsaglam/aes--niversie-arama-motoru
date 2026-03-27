@@ -26,7 +26,9 @@ interface Program {
   nc_value:            string | null;
   deadline_wise:       string | null;
   deadline_sose:       string | null;
+  min_gpa:             number | null;
   uni_assist:          number;
+  conditional_admission: number;
   confidence:          number;
   last_scraped:        string;
   url:                 string | null;
@@ -237,9 +239,10 @@ export default function ProgramsPage() {
                   <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs">Üniversite</th>
                   <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden md:table-cell">Program</th>
                   <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden sm:table-cell">Şehir</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden lg:table-cell">Dil</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden xl:table-cell">Dil Şartı</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs">Güncellik</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden lg:table-cell">Dil Şartı</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden xl:table-cell">WiSe</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden xl:table-cell">SoSe</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs">Güncl.</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -255,18 +258,30 @@ export default function ProgramsPage() {
                           ? <a href={p.url} target="_blank" rel="noopener noreferrer"
                               className="hover:text-blue-600">{p.university || "—"}</a>
                           : (p.university || "—")}
+                        {p.uni_assist ? (
+                          <span className="ml-1 text-amber-500 text-xs" title="uni-assist gerekli">U</span>
+                        ) : null}
                       </td>
                       <td className="px-4 py-2.5 text-slate-600 hidden md:table-cell max-w-[200px] truncate text-xs">
                         {p.program || "—"}
+                        {p.nc_value && p.nc_value.toLowerCase() !== "zulassungsfrei" && (
+                          <span className="ml-1 text-slate-400">(NC {p.nc_value})</span>
+                        )}
                       </td>
                       <td className="px-4 py-2.5 text-slate-500 hidden sm:table-cell text-xs">
                         {p.city || "—"}
                       </td>
-                      <td className="px-4 py-2.5 text-slate-500 hidden lg:table-cell text-xs">
-                        {p.language || "—"}
+                      <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-slate-500">
+                        {p.german_requirement || p.english_requirement
+                          ? <span>{p.german_requirement || ""}{p.german_requirement && p.english_requirement ? " / " : ""}{p.english_requirement || ""}</span>
+                          : "—"}
+                        {p.min_gpa ? <span className="ml-1 text-slate-400">GPA≤{p.min_gpa}</span> : null}
                       </td>
-                      <td className="px-4 py-2.5 hidden xl:table-cell text-xs text-slate-500">
-                        {p.german_requirement || p.english_requirement || "—"}
+                      <td className="px-4 py-2.5 hidden xl:table-cell text-xs text-slate-600">
+                        {p.deadline_wise || "—"}
+                      </td>
+                      <td className="px-4 py-2.5 hidden xl:table-cell text-xs text-slate-600">
+                        {p.deadline_sose || "—"}
                       </td>
                       <td className="px-4 py-2.5">
                         <span className={`inline-flex items-center gap-1 text-xs ${
