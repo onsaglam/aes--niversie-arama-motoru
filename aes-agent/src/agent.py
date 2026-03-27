@@ -296,54 +296,55 @@ def _domain_to_university(url: str) -> str:
 # ─── DAAD API Araması ─────────────────────────────────────────────────────────
 
 async def search_programs_daad(profile) -> list[ProgramDetail]:
-    """DAAD API ile program ara. (Yeni format: courses[] yapısı)"""
+    """DAAD API ile program ara. (Yeni format: courses[] yapısı)
+
+    Strateji:
+      1. Önce derece filtresi ile ara (preparationForDegree + degree numeric)
+      2. Sonuç çok azsa (< 3) filtresiz ara, derece client-side filtrele
+    """
     import re as _re
-    results = []
-    console.print("   🔍 DAAD API taranıyor...", style="dim")
 
-    degree_map = {"Master": "Master", "Bachelor": "Bachelor", "PhD": "PhD"}
-    lang_filter = {"İngilizce": "English", "Almanca": "German"}
+    # DAAD API hem string hem numeric derece parametresi kabul edebilir
+    _DEGREE_STRING = {"Master": "Master", "Bachelor": "Bachelor", "PhD": "PhD"}
+    _DEGREE_NUMERIC = {"Master": "2", "Bachelor": "1", "PhD": "4", "Ausbildung": "3"}
+    _LANG_FILTER = {"İngilizce": "English", "Almanca": "German"}
 
-    params = {
-        "q":                    profile.desired_field,
-        "preparationForDegree": degree_map.get(profile.degree_type, "Master"),
-    }
-    url = "https://www2.daad.de/deutschland/studienangebote/international-programmes/api/solr/en/search.json"
+    url      = "https://www2.daad.de/deutschland/studienangebote/international-programmes/api/solr/en/search.json"
     base_url = "https://www2.daad.de"
+    preferred_lang = _LANG_FILTER.get(profile.program_language, "")
 
-    try:
-        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "Mozilla/5.0"}) as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
+    def _parse_courses(courses: list, apply_degree_filter: bool) -> list[ProgramDetail]:
+        """courses listesinden ProgramDetail listesi üret."""
+        progs: list[ProgramDetail] = []
+        target_degree = _DEGREE_STRING.get(profile.degree_type, "").lower()
 
-        preferred_lang = lang_filter.get(profile.program_language, "")
-        courses = data.get("courses", [])
-
-        for item in courses[:50]:
-            langs = item.get("languages") or []
+        for item in courses[:60]:
+            langs    = item.get("languages") or []
             uni_name = item.get("academy", "")
 
-            # Özel üniversite filtresi — sadece devlet üniversiteleri
             if _is_private_university(uni_name):
                 logging.info(f"Özel üniversite atlandı: {uni_name}")
                 continue
 
-            # Dil filtresi — sertifikaya göre kilitli
+            # Client-side derece filtresi (filtresiz sorgu için)
+            if apply_degree_filter and target_degree:
+                item_deg = (item.get("preparationForDegree") or "").lower()
+                if item_deg and target_degree not in item_deg:
+                    continue
+
+            # Dil filtresi
             if preferred_lang and preferred_lang not in langs:
                 continue
 
-            # Deadline HTML'den metin çıkar
-            deadline_raw = item.get("applicationDeadline") or ""
+            deadline_raw  = item.get("applicationDeadline") or ""
             deadline_text = _re.sub(r"<[^>]+>", " ", deadline_raw).strip()[:200]
 
-            # Link — tam URL yap
             link = item.get("link", "")
             if link and not link.startswith("http"):
                 link = base_url + link
 
             prog = ProgramDetail(
-                university = item.get("academy", ""),
+                university = uni_name,
                 city       = item.get("city", ""),
                 program    = item.get("courseName", ""),
                 degree     = item.get("preparationForDegree", profile.degree_type),
@@ -354,11 +355,52 @@ async def search_programs_daad(profile) -> list[ProgramDetail]:
                 confidence = 0.7,
             )
             if prog.university:
-                results.append(prog)
+                progs.append(prog)
+        return progs
+
+    async def _daad_query(extra_params: dict) -> list:
+        """DAAD API'ye istek at, courses listesini döndür."""
+        base_params = {
+            "q":    profile.desired_field,
+            "rows": "60",
+        }
+        base_params.update(extra_params)
+        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "Mozilla/5.0"}) as client:
+            resp = await client.get(url, params=base_params)
+            resp.raise_for_status()
+            return resp.json().get("courses", [])
+
+    console.print("   🔍 DAAD API taranıyor...", style="dim")
+    results: list[ProgramDetail] = []
+
+    try:
+        # — Deneme 1: Hem string hem numeric derece filtresi ile ara —
+        deg_str = _DEGREE_STRING.get(profile.degree_type, "Master")
+        deg_num = _DEGREE_NUMERIC.get(profile.degree_type, "2")
+        courses = await _daad_query({
+            "preparationForDegree": deg_str,
+            "degree": deg_num,
+        })
+        results = _parse_courses(courses, apply_degree_filter=False)
+
+        # — Deneme 2: Filtresiz geniş arama (yedek) —
+        if len(results) < 4:
+            logging.info(f"DAAD derece filtresi az sonuç ({len(results)}), filtresiz deneniyor...")
+            courses_broad = await _daad_query({})
+            broad_results = _parse_courses(courses_broad, apply_degree_filter=True)
+            # Mevcut sonuçlarla birleştir (duplikat olmadan)
+            existing_keys = {(p.university.lower(), p.program.lower()[:40]) for p in results}
+            for p in broad_results:
+                k = (p.university.lower(), p.program.lower()[:40])
+                if k not in existing_keys:
+                    results.append(p)
+                    existing_keys.add(k)
 
         console.print(f"   ✅ DAAD'dan {len(results)} program bulundu", style="green")
+
     except Exception as e:
         console.print(f"   ⚠️  DAAD API hatası: {e}", style="yellow")
+        logging.warning(f"DAAD API hatası: {e}")
 
     return results
 
@@ -875,6 +917,41 @@ async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
         console.print("\n[3/5] ⏩ Hızlı mod — ek web araması atlandı")
 
     all_programs = merge_programs([daad_programs, web_programs, hochschulstart_progs])
+
+    # ── DB önbellekten ek program yükle ───────────────────────────────
+    # Daha önce başka öğrenci için taranmış programları içe al —
+    # bunlar scraping olmadan hazır veriye sahip.
+    try:
+        field_keywords = [kw for kw in profile.desired_field.split() if len(kw) >= 4]
+        db_programs = db.search(
+            language     = profile.program_language if profile.program_language != "Fark etmez" else None,
+            degree       = profile.degree_type,
+            field_keywords = field_keywords[:5],  # ilk 5 anahtar kelime yeterli
+        )
+        new_from_db = 0
+        existing_keys = {(p.university.lower().strip(), p.program.lower().strip()[:40]) for p in all_programs}
+        for row in db_programs:
+            k = (row["university"].lower().strip(), row["program"].lower().strip()[:40])
+            if k not in existing_keys:
+                prog = ProgramDetail(
+                    university = row["university"],
+                    city       = row.get("city") or "",
+                    program    = row["program"],
+                    degree     = row.get("degree") or profile.degree_type,
+                    language   = row.get("language") or "",
+                    url        = row.get("url") or "",
+                    sources    = ["db_cache"],
+                    confidence = row.get("confidence", 0.5),
+                )
+                _apply_db_cache(prog, row)
+                all_programs.append(prog)
+                existing_keys.add(k)
+                new_from_db += 1
+        if new_from_db:
+            console.print(f"      💾 DB önbellekten {new_from_db} ek program eklendi", style="dim")
+    except Exception as e:
+        logging.warning(f"DB önbellek yükleme hatası: {e}")
+
     console.print(f"\n      Toplam {len(all_programs)} benzersiz program bulundu")
 
     # ── 4. Detay çekme — sıralı (rate limit güvenliği için) ───────────

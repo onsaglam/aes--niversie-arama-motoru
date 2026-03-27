@@ -25,8 +25,10 @@ interface Program {
   english_requirement: string | null;
   nc_value: string | null;
   uni_assist_required: boolean;
+  conditional_admission: boolean;
   confidence: number;
   url: string;
+  notes?: string;
 }
 
 interface StudentDetail {
@@ -76,6 +78,61 @@ const ELIGIBILITY_CONFIG = {
 
 // ANSI escape kodlarını temizle (Rich terminal çıktısından)
 const stripAnsi = (str: string) => str.replace(/\x1b\[[0-9;]*[mGKHF]/g, "");
+
+// Almanya üniversite başvuru tarihlerini parse et
+// Desteklenen formatlar: "15.01.2026", "15.01", "15. Januar 2026", "01. Juli"
+const GERMAN_MONTHS: Record<string, number> = {
+  // German
+  januar: 0, februar: 1, märz: 2, april: 3, mai: 4, juni: 5,
+  juli: 6, august: 7, september: 8, oktober: 9, november: 10, dezember: 11,
+  // English-only (rest share spelling with German)
+  january: 0, february: 1, march: 2, may: 4, june: 5, july: 6, october: 9, december: 11,
+};
+
+function parseDeadline(raw: string | null): Date | null {
+  if (!raw) return null;
+  const s = raw.trim();
+
+  // DD.MM.YYYY
+  let m = s.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (m) return new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]));
+
+  // DD. MonthName YYYY or DD. MonthName
+  m = s.match(/(\d{1,2})\.\s*([A-Za-zä]+)\s*(\d{4})?/);
+  if (m) {
+    const mo = GERMAN_MONTHS[m[2].toLowerCase()];
+    if (mo !== undefined) {
+      const yr = m[3] ? parseInt(m[3]) : new Date().getFullYear();
+      const d  = new Date(yr, mo, parseInt(m[1]));
+      // If no year given and date already passed, try next year
+      if (!m[3] && d < new Date()) d.setFullYear(d.getFullYear() + 1);
+      return d;
+    }
+  }
+
+  // DD.MM (no year)
+  m = s.match(/^(\d{1,2})\.(\d{1,2})\.?$/);
+  if (m) {
+    const now = new Date();
+    const d   = new Date(now.getFullYear(), parseInt(m[2]) - 1, parseInt(m[1]));
+    if (d < now) d.setFullYear(d.getFullYear() + 1);
+    return d;
+  }
+
+  return null;
+}
+
+function deadlineUrgency(raw: string | null): { text: string; cls: string } | null {
+  const date = parseDeadline(raw);
+  if (!date) return null;
+  const days = Math.floor((date.getTime() - Date.now()) / 86400000);
+  if (days < -7) return null; // very stale — don't clutter
+  if (days < 0)  return { text: `${Math.abs(days)}g geçti`, cls: "text-slate-400 line-through" };
+  if (days <= 7)  return { text: `${days}g kaldı!`, cls: "text-red-600 font-bold" };
+  if (days <= 21) return { text: `${days}g kaldı`, cls: "text-amber-600 font-semibold" };
+  if (days <= 60) return { text: `${days}g kaldı`, cls: "text-blue-600" };
+  return null;
+}
 
 export default function StudentPage() {
   const params = useParams();
@@ -389,6 +446,40 @@ export default function StudentPage() {
         </div>
       )}
 
+      {/* Yaklaşan başvuru tarihleri uyarısı */}
+      {(() => {
+        const urgent = sorted
+          .filter((p) => p.eligibility === "uygun" || p.eligibility === "sartli")
+          .flatMap((p) => {
+            const items: { label: string; deadline: string; urgency: { text: string; cls: string } }[] = [];
+            const wu = deadlineUrgency(p.deadline_wise);
+            const su = deadlineUrgency(p.deadline_sose);
+            if (wu && !wu.cls.includes("line-through"))
+              items.push({ label: `${p.university} — WiSe`, deadline: p.deadline_wise!, urgency: wu });
+            if (su && !su.cls.includes("line-through"))
+              items.push({ label: `${p.university} — SoSe`, deadline: p.deadline_sose!, urgency: su });
+            return items;
+          })
+          .filter((x) => x.urgency.cls.includes("red") || x.urgency.cls.includes("amber"))
+          .sort((a, b) => (parseDeadline(a.deadline)?.getTime() ?? 0) - (parseDeadline(b.deadline)?.getTime() ?? 0))
+          .slice(0, 5);
+
+        if (urgent.length === 0) return null;
+        return (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm font-semibold text-amber-800 mb-2">⏰ Yaklaşan Başvuru Tarihleri</p>
+            <div className="space-y-1">
+              {urgent.map((x, i) => (
+                <div key={i} className="flex items-center justify-between text-xs">
+                  <span className="text-amber-700 truncate max-w-[70%]">{x.label}</span>
+                  <span className={x.urgency.cls}>{x.deadline} ({x.urgency.text})</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Log çıktısı */}
       {(running || log) && (
         <div className="bg-slate-900 rounded-xl overflow-hidden">
@@ -471,7 +562,8 @@ export default function StudentPage() {
                   const rowKey = `${p.university}||${p.program}`;
                   const isExpanded = expanded === rowKey;
                   const hasDetails = p.deadline_wise || p.deadline_sose || p.german_requirement
-                    || p.english_requirement || p.nc_value || p.issues?.length || p.passed_checks?.length;
+                    || p.english_requirement || p.nc_value || p.notes
+                    || p.issues?.length || p.passed_checks?.length;
                   return (
                     <>
                       <tr
@@ -492,9 +584,21 @@ export default function StudentPage() {
                           {p.language || "—"}
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${cfg.badge}`}>
-                            {cfg.label}
-                          </span>
+                          <div className="flex flex-col gap-1">
+                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium w-fit ${cfg.badge}`}>
+                              {cfg.label}
+                            </span>
+                            {(() => {
+                              const wu = deadlineUrgency(p.deadline_wise);
+                              const su = deadlineUrgency(p.deadline_sose);
+                              const best = (wu && !wu.cls.includes("line-through")) ? wu
+                                         : (su && !su.cls.includes("line-through")) ? su
+                                         : null;
+                              return best ? (
+                                <span className={`text-xs ${best.cls}`}>{best.text}</span>
+                              ) : null;
+                            })()}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
@@ -527,19 +631,29 @@ export default function StudentPage() {
                               {p.nc_value && <span><span className="text-slate-400">NC:</span> {p.nc_value}</span>}
                               {p.uni_assist_required && <span className="text-amber-600">uni-assist gerekli</span>}
                             </div>
+                            {p.confidence < 0.6 && (
+                              <span className="col-span-full text-xs text-slate-400">
+                                Veri güvenilirliği: {Math.round(p.confidence * 100)}%
+                              </span>
+                            )}
                             {p.issues && p.issues.length > 0 && (
-                              <div className="mt-2 space-y-0.5">
+                              <div className="mt-2 space-y-0.5 col-span-full">
                                 {p.issues.map((issue, j) => (
                                   <p key={j} className="text-xs text-red-600">⚠ {issue}</p>
                                 ))}
                               </div>
                             )}
                             {p.passed_checks && p.passed_checks.length > 0 && (
-                              <div className="mt-1 space-y-0.5">
+                              <div className="mt-1 space-y-0.5 col-span-full">
                                 {p.passed_checks.map((check, j) => (
                                   <p key={j} className="text-xs text-green-700">✓ {check}</p>
                                 ))}
                               </div>
+                            )}
+                            {p.notes && (
+                              <p className="mt-1.5 col-span-full text-xs text-slate-500 italic border-t border-slate-100 pt-1.5">
+                                {p.notes.length > 200 ? p.notes.slice(0, 200) + "…" : p.notes}
+                              </p>
                             )}
                           </td>
                         </tr>
