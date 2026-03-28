@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   Database, Download, Trash2,
   CheckCircle2, AlertTriangle, ExternalLink, Clock, X, SlidersHorizontal,
+  Sparkles, RefreshCw, Search, ChevronDown, ChevronUp, Zap, Globe,
 } from "lucide-react";
 
 /* ─── Types ─────────────────────────────────────────────── */
@@ -42,6 +43,19 @@ type AdmissionFilter = "" | "direct" | "conditional";
 type NcFilter        = "" | "free" | "restricted";
 type DeadlineFilter  = "" | "7" | "14" | "30" | "60";
 type UniAssistFilter = "" | "required" | "not_required";
+
+interface EnrichStats { needs_stage1: number; needs_stage2: number; total: number; }
+
+interface HighlightItem {
+  title: string; university: string; program: string;
+  city?: string; url?: string; deadline?: string; reason: string;
+}
+interface HighlightSection {
+  category: string; icon: string; description: string; items: HighlightItem[];
+}
+interface HighlightResult {
+  sections: HighlightSection[]; summary: string; generated_at: string;
+}
 
 /* ─── Helpers ────────────────────────────────────────────── */
 
@@ -155,6 +169,20 @@ export default function ProgramsPage() {
   const [showLimit,       setShowLimit]       = useState(300);
   const [showFilters,     setShowFilters]     = useState(false);
 
+  // Enrichment panel
+  const [enrichStats,    setEnrichStats]     = useState<EnrichStats | null>(null);
+  const [enrichRunning,  setEnrichRunning]   = useState(false);
+  const [enrichMsg,      setEnrichMsg]       = useState("");
+  const [showEnrich,     setShowEnrich]      = useState(false);
+
+  // AI Highlights
+  const [highlights,     setHighlights]      = useState<HighlightResult | null>(null);
+  const [hiLoading,      setHiLoading]       = useState(false);
+  const [showAiPicks,    setShowAiPicks]     = useState(false);
+  const [hiCatFilter,    setHiCatFilter]     = useState("");
+  const [hiUniFilter,    setHiUniFilter]     = useState("");
+  const [hiKwFilter,     setHiKwFilter]      = useState("");
+
   // Filters
   const [search,          setSearch]          = useState("");
   const [langFilter,      setLangFilter]      = useState("");
@@ -181,7 +209,50 @@ export default function ProgramsPage() {
       .then(l => { setPrograms(l.rows ?? []); setTotalRows(l.total ?? 0); setLoading(false); });
   };
 
-  useEffect(() => { loadStats(); loadPrograms("","",""); }, []); // eslint-disable-line
+  const loadEnrichStats = () =>
+    fetch("/api/programs/enrich").then(r => r.json()).then(setEnrichStats).catch(() => {});
+
+  const runEnrich = async (stage: "1" | "2" | "all", batch = 20) => {
+    setEnrichRunning(true);
+    setEnrichMsg("Çalışıyor...");
+    try {
+      const r = await fetch("/api/programs/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage, batch }),
+      });
+      const d = await r.json();
+      setEnrichMsg(d.success ? "Tamamlandı ✓" : `Hata: ${d.error ?? "bilinmeyen"}`);
+      if (d.success) { loadStats(); loadPrograms(); loadEnrichStats(); }
+    } catch (e) {
+      setEnrichMsg("Bağlantı hatası");
+    }
+    setEnrichRunning(false);
+  };
+
+  const loadHighlights = (force = false) => {
+    setHiLoading(true);
+    const url = "/api/programs/highlights" + (force ? "?refresh=1" : "");
+    fetch(url).then(r => r.json()).then(d => { setHighlights(d); setHiLoading(false); }).catch(() => setHiLoading(false));
+  };
+
+  useEffect(() => { loadStats(); loadPrograms("","",""); loadEnrichStats(); }, []); // eslint-disable-line
+
+  // Filtered AI highlights
+  const filteredHighlights = useMemo(() => {
+    if (!highlights) return [];
+    return highlights.sections
+      .filter(s => !hiCatFilter || s.category === hiCatFilter)
+      .map(s => ({
+        ...s,
+        items: s.items.filter(item => {
+          if (hiUniFilter && !item.university.toLowerCase().includes(hiUniFilter.toLowerCase())) return false;
+          if (hiKwFilter && !item.program.toLowerCase().includes(hiKwFilter.toLowerCase()) && !item.reason.toLowerCase().includes(hiKwFilter.toLowerCase())) return false;
+          return true;
+        }),
+      }))
+      .filter(s => s.items.length > 0);
+  }, [highlights, hiCatFilter, hiUniFilter, hiKwFilter]);
 
   // Dynamic option lists
   const cities  = useMemo(() => [...new Set(programs.map(p => p.city).filter(Boolean))].sort(), [programs]);
@@ -333,6 +404,238 @@ export default function ProgramsPage() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Enrichment Panel ─────────────────────────────────── */}
+      {!noDb && enrichStats && (enrichStats.needs_stage1 > 0 || enrichStats.needs_stage2 > 0) && (
+        <div className="bg-white rounded-xl border border-amber-200 overflow-hidden">
+          <button
+            className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-amber-700 hover:bg-amber-50 transition-colors"
+            onClick={() => setShowEnrich(v => !v)}
+          >
+            <span className="flex items-center gap-2">
+              <Zap className="w-4 h-4" />
+              Eksik Veri Tarama
+              <span className="text-xs font-normal text-amber-600">
+                {enrichStats.needs_stage1} URL eksik · {enrichStats.needs_stage2} detay eksik
+              </span>
+            </span>
+            {showEnrich ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+
+          {showEnrich && (
+            <div className="border-t border-amber-100 px-4 py-3 space-y-3">
+              <p className="text-xs text-slate-500">
+                2 aşamalı tarama: <strong>Stage 1</strong> Tavily ile URL bulur,
+                <strong> Stage 2</strong> Playwright + Claude ile deadline / dil şartı / NC detaylarını çeker.
+              </p>
+
+              <div className="flex flex-wrap gap-2 items-center">
+                <button
+                  disabled={enrichRunning || enrichStats.needs_stage1 === 0}
+                  onClick={() => runEnrich("1", 20)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 disabled:opacity-40 transition-colors"
+                >
+                  {enrichRunning ? <div className="w-3 h-3 border border-amber-600 border-t-transparent rounded-full animate-spin" /> : <Search className="w-3 h-3" />}
+                  Stage 1 — URL Bul ({enrichStats.needs_stage1})
+                </button>
+
+                <button
+                  disabled={enrichRunning || enrichStats.needs_stage2 === 0}
+                  onClick={() => runEnrich("2", 10)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 disabled:opacity-40 transition-colors"
+                >
+                  {enrichRunning ? <div className="w-3 h-3 border border-blue-600 border-t-transparent rounded-full animate-spin" /> : <Globe className="w-3 h-3" />}
+                  Stage 2 — Detay Tara ({enrichStats.needs_stage2})
+                </button>
+
+                <button
+                  disabled={enrichRunning}
+                  onClick={() => runEnrich("all", 15)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-white hover:bg-slate-700 disabled:opacity-40 transition-colors"
+                >
+                  Her İkisi
+                </button>
+
+                {enrichMsg && (
+                  <span className={`text-xs ml-2 ${enrichMsg.startsWith("Hata") ? "text-red-500" : enrichMsg === "Çalışıyor..." ? "text-slate-400" : "text-green-600"}`}>
+                    {enrichMsg}
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[10px] text-slate-400">
+                Stage 2 her program için ~5-15 sn sürer. Büyük batch&apos;lerde uzun sürebilir.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── AI Önerileri ─────────────────────────────────────── */}
+      {!noDb && (
+        <div className="bg-white rounded-xl border border-purple-200 overflow-hidden">
+          <button
+            className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-purple-700 hover:bg-purple-50 transition-colors"
+            onClick={() => {
+              setShowAiPicks(v => !v);
+              if (!highlights && !hiLoading) loadHighlights();
+            }}
+          >
+            <span className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4" />
+              AI Önerileri
+              <span className="text-xs font-normal text-purple-500">Claude tarafından öne çıkarılan programlar</span>
+            </span>
+            <div className="flex items-center gap-2">
+              {highlights && (
+                <button
+                  onClick={e => { e.stopPropagation(); loadHighlights(true); }}
+                  className="p-1 rounded hover:bg-purple-100 text-purple-400 hover:text-purple-600"
+                  title="Yenile"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {showAiPicks ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </div>
+          </button>
+
+          {showAiPicks && (
+            <div className="border-t border-purple-100">
+              {hiLoading && (
+                <div className="flex items-center justify-center py-10 gap-3 text-purple-400 text-sm">
+                  <div className="w-5 h-5 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                  Claude analiz yapıyor...
+                </div>
+              )}
+
+              {!hiLoading && highlights && (
+                <div className="p-4 space-y-4">
+                  {/* Filtreler */}
+                  <div className="flex flex-wrap gap-2 items-end">
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Kategori</label>
+                      <select
+                        value={hiCatFilter}
+                        onChange={e => setHiCatFilter(e.target.value)}
+                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-purple-400"
+                      >
+                        <option value="">Tüm kategoriler</option>
+                        {highlights.sections.map(s => (
+                          <option key={s.category} value={s.category}>{s.icon} {s.category}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Üniversite</label>
+                      <input
+                        type="text"
+                        placeholder="Filtrele..."
+                        value={hiUniFilter}
+                        onChange={e => setHiUniFilter(e.target.value)}
+                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs w-36 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Program / Anahtar Kelime</label>
+                      <input
+                        type="text"
+                        placeholder="Ara..."
+                        value={hiKwFilter}
+                        onChange={e => setHiKwFilter(e.target.value)}
+                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs w-40 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                      />
+                    </div>
+
+                    {(hiCatFilter || hiUniFilter || hiKwFilter) && (
+                      <button
+                        onClick={() => { setHiCatFilter(""); setHiUniFilter(""); setHiKwFilter(""); }}
+                        className="flex items-center gap-1 text-xs text-slate-400 hover:text-red-500 pb-1.5 transition-colors"
+                      >
+                        <X className="w-3 h-3" /> Temizle
+                      </button>
+                    )}
+
+                    <span className="text-xs text-slate-400 ml-auto pb-1.5">
+                      {filteredHighlights.reduce((n, s) => n + s.items.length, 0)} öneri
+                    </span>
+                  </div>
+
+                  {/* Kategoriler */}
+                  {filteredHighlights.length === 0 ? (
+                    <p className="text-sm text-slate-400 text-center py-4">Filtrelerle eşleşen öneri yok</p>
+                  ) : (
+                    <div className="space-y-5">
+                      {filteredHighlights.map(section => (
+                        <div key={section.category}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-lg">{section.icon}</span>
+                            <div>
+                              <h3 className="text-sm font-semibold text-slate-800">{section.category}</h3>
+                              <p className="text-xs text-slate-500">{section.description}</p>
+                            </div>
+                          </div>
+                          <div className="grid sm:grid-cols-2 gap-2">
+                            {section.items.map((item, i) => (
+                              <div key={i} className="rounded-lg border border-slate-100 bg-slate-50 p-3 space-y-1">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-semibold text-slate-800 truncate">{item.university}</p>
+                                    <p className="text-xs text-slate-600 leading-snug">{item.program}</p>
+                                  </div>
+                                  {item.url && (
+                                    <a href={item.url} target="_blank" rel="noopener noreferrer"
+                                       className="shrink-0 text-blue-500 hover:text-blue-700">
+                                      <ExternalLink className="w-3.5 h-3.5" />
+                                    </a>
+                                  )}
+                                </div>
+                                {item.city && <p className="text-[10px] text-slate-400">{item.city}</p>}
+                                {item.deadline && (
+                                  <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 font-medium">
+                                    Deadline: {item.deadline}
+                                  </span>
+                                )}
+                                <p className="text-[11px] text-purple-700 bg-purple-50 rounded px-2 py-1 leading-snug">
+                                  {item.reason}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {highlights.summary && (
+                    <div className="border-t border-purple-100 pt-3">
+                      <p className="text-xs text-slate-500 italic">{highlights.summary}</p>
+                      <p className="text-[10px] text-slate-300 mt-1">
+                        Oluşturulma: {new Date(highlights.generated_at).toLocaleString("tr-TR")} · 6 saatte bir yenilenir
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!hiLoading && !highlights && (
+                <div className="p-6 text-center">
+                  <Sparkles className="w-8 h-8 mx-auto mb-2 text-purple-300" />
+                  <p className="text-sm text-slate-500 mb-3">AI analizi henüz yüklenmedi</p>
+                  <button
+                    onClick={() => loadHighlights()}
+                    className="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-medium hover:bg-purple-700 transition-colors"
+                  >
+                    Analiz Başlat
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
