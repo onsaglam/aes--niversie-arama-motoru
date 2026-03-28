@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import {
   Database, Download, Trash2,
-  CheckCircle2, AlertTriangle, ExternalLink, Clock,
+  CheckCircle2, AlertTriangle, ExternalLink, Clock, X, SlidersHorizontal,
 } from "lucide-react";
 
 /* ─── Types ─────────────────────────────────────────────── */
@@ -38,6 +38,11 @@ interface Program {
   url:                   string | null;
 }
 
+type AdmissionFilter = "" | "direct" | "conditional";
+type NcFilter        = "" | "free" | "restricted";
+type DeadlineFilter  = "" | "7" | "14" | "30" | "60";
+type UniAssistFilter = "" | "required" | "not_required";
+
 /* ─── Helpers ────────────────────────────────────────────── */
 
 const PAGE_LOAD = Date.now();
@@ -45,7 +50,7 @@ const PAGE_LOAD = Date.now();
 const MONTHS_DE: Record<string, number> = {
   januar:1, februar:2, märz:3, april:4, mai:5, juni:6,
   juli:7, august:8, september:9, oktober:10, november:11, dezember:12,
-  mitte:0, // "Mitte September" → use month only
+  mitte:0,
   january:1, february:2, march:3, may:5, june:6, july:7,
   october:10, december:12,
 };
@@ -53,10 +58,8 @@ const MONTHS_DE: Record<string, number> = {
 function parseDeadline(raw: string | null | undefined): Date | null {
   if (!raw) return null;
   const s = raw.trim();
-  // DD.MM.YYYY
   let m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
   if (m) return new Date(`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`);
-  // DD.MM. or DD.MM
   m = s.match(/^(\d{1,2})\.(\d{1,2})\.?$/);
   if (m) {
     const now = new Date(); const y = now.getFullYear();
@@ -64,18 +67,14 @@ function parseDeadline(raw: string | null | undefined): Date | null {
     if (d < now) d.setFullYear(y+1);
     return d;
   }
-  // DD. MonthName or "Mitte MonthName"
-  m = s.match(/(\d{1,2})\.\s*([A-Za-zä]+)/i) || s.match(/([A-Za-zä]+)\s+(\d{4})?/i);
-  if (m) {
-    const mm = s.match(/(\d{1,2})\.\s*([A-Za-zä]+)/i);
-    if (mm) {
-      const mo = MONTHS_DE[mm[2].toLowerCase()];
-      if (mo) {
-        const now = new Date(); const y = now.getFullYear();
-        const d = new Date(y, mo-1, parseInt(mm[1]));
-        if (d < now) d.setFullYear(y+1);
-        return d;
-      }
+  const mm = s.match(/(\d{1,2})\.\s*([A-Za-zä]+)/i);
+  if (mm) {
+    const mo = MONTHS_DE[mm[2].toLowerCase()];
+    if (mo) {
+      const now = new Date(); const y = now.getFullYear();
+      const d = new Date(y, mo-1, parseInt(mm[1]));
+      if (d < now) d.setFullYear(y+1);
+      return d;
     }
   }
   return null;
@@ -84,6 +83,15 @@ function parseDeadline(raw: string | null | undefined): Date | null {
 function daysUntil(d: Date): number {
   const now = new Date(); now.setHours(0,0,0,0);
   return Math.round((d.getTime() - now.getTime()) / 86400000);
+}
+
+function nearestDeadlineDays(p: Program): number | null {
+  const dates = [p.deadline_wise, p.deadline_sose]
+    .map(parseDeadline)
+    .filter((d): d is Date => d !== null)
+    .map(daysUntil)
+    .filter(d => d >= 0);
+  return dates.length ? Math.min(...dates) : null;
 }
 
 function DeadlinePill({ raw }: { raw: string | null | undefined }) {
@@ -139,19 +147,25 @@ function ConfidenceBar({ v }: { v: number }) {
 /* ─── Main Component ─────────────────────────────────────── */
 
 export default function ProgramsPage() {
-  const [stats,          setStats]          = useState<Stats | null>(null);
-  const [programs,       setPrograms]       = useState<Program[]>([]);
-  const [totalRows,      setTotalRows]      = useState(0);
-  const [search,         setSearch]         = useState("");
-  const [langFilter,     setLangFilter]     = useState("");
-  const [degFilter,      setDegFilter]      = useState("");
-  const [ncFreeOnly,     setNcFreeOnly]     = useState(false);
-  const [uniAssistFilter,setUniAssistFilter]= useState<"" | "required" | "not_required">("");
-  const [sortKey,        setSortKey]        = useState<"university"|"deadline_wise"|"deadline_sose"|"last_scraped"|"confidence">("last_scraped");
-  const [sortDir,        setSortDir]        = useState<"asc"|"desc">("desc");
-  const [loading,        setLoading]        = useState(true);
-  const [cleaning,       setCleaning]       = useState(false);
-  const [showLimit,      setShowLimit]      = useState(300);
+  const [stats,           setStats]           = useState<Stats | null>(null);
+  const [programs,        setPrograms]        = useState<Program[]>([]);
+  const [totalRows,       setTotalRows]       = useState(0);
+  const [loading,         setLoading]         = useState(true);
+  const [cleaning,        setCleaning]        = useState(false);
+  const [showLimit,       setShowLimit]       = useState(300);
+  const [showFilters,     setShowFilters]     = useState(false);
+
+  // Filters
+  const [search,          setSearch]          = useState("");
+  const [langFilter,      setLangFilter]      = useState("");
+  const [degFilter,       setDegFilter]       = useState("");
+  const [cityFilter,      setCityFilter]      = useState("");
+  const [admissionFilter, setAdmissionFilter] = useState<AdmissionFilter>("");
+  const [ncFilter,        setNcFilter]        = useState<NcFilter>("");
+  const [deadlineFilter,  setDeadlineFilter]  = useState<DeadlineFilter>("");
+  const [uniAssistFilter, setUniAssistFilter] = useState<UniAssistFilter>("");
+  const [sortKey,         setSortKey]         = useState<"university"|"deadline_wise"|"deadline_sose"|"last_scraped"|"confidence">("last_scraped");
+  const [sortDir,         setSortDir]         = useState<"asc"|"desc">("desc");
 
   const loadStats = () =>
     fetch("/api/programs").then(r => r.json()).then(setStats);
@@ -169,18 +183,33 @@ export default function ProgramsPage() {
 
   useEffect(() => { loadStats(); loadPrograms("","",""); }, []); // eslint-disable-line
 
-  const handleClean = async () => {
-    if (!confirm("30 günden eski kayıtlar silinecek. Devam?")) return;
-    setCleaning(true);
-    const r = await fetch("/api/programs", { method: "DELETE" });
-    const d = await r.json();
-    setCleaning(false);
-    alert(`${d.deleted} eski kayıt silindi.`);
-    loadStats(); loadPrograms();
-  };
+  // Dynamic option lists
+  const cities  = useMemo(() => [...new Set(programs.map(p => p.city).filter(Boolean))].sort(), [programs]);
+  const degrees = useMemo(() => [...new Set(programs.map(p => p.degree).filter(Boolean))].sort(), [programs]);
 
-  const filtered = programs.filter(p => {
-    if (ncFreeOnly && p.nc_value?.toLowerCase() !== "zulassungsfrei") return false;
+  // Client-side filtering
+  const filtered = useMemo(() => programs.filter(p => {
+    // city
+    if (cityFilter && p.city !== cityFilter) return false;
+    // admission type
+    if (admissionFilter === "conditional" && !p.conditional_admission) return false;
+    if (admissionFilter === "direct"      &&  p.conditional_admission) return false;
+    // NC
+    if (ncFilter === "free") {
+      const v = p.nc_value?.toLowerCase().trim() ?? "";
+      if (v !== "zulassungsfrei" && v !== "none" && v !== "null" && v !== "") return false;
+    }
+    if (ncFilter === "restricted") {
+      const v = p.nc_value?.toLowerCase().trim() ?? "";
+      if (!v || v === "zulassungsfrei" || v === "none" || v === "null") return false;
+    }
+    // deadline proximity
+    if (deadlineFilter) {
+      const maxDays = parseInt(deadlineFilter);
+      const nearest = nearestDeadlineDays(p);
+      if (nearest === null || nearest > maxDays) return false;
+    }
+    // uni-assist
     if (uniAssistFilter === "required"     && !p.uni_assist)  return false;
     if (uniAssistFilter === "not_required" && p.uni_assist)   return false;
     return true;
@@ -190,7 +219,34 @@ export default function ProgramsPage() {
     const av = (a[sortKey] ?? "") as string;
     const bv = (b[sortKey] ?? "") as string;
     return av < bv ? -dir : av > bv ? dir : 0;
-  });
+  }), [programs, cityFilter, admissionFilter, ncFilter, deadlineFilter, uniAssistFilter, sortKey, sortDir]);
+
+  // Active filter chips
+  const activeFilters: { label: string; clear: () => void }[] = [];
+  if (search)          activeFilters.push({ label: `"${search}"`,                  clear: () => { setSearch(""); loadPrograms(langFilter, degFilter, ""); } });
+  if (langFilter)      activeFilters.push({ label: langFilter,                      clear: () => { setLangFilter(""); loadPrograms("", degFilter, search); } });
+  if (degFilter)       activeFilters.push({ label: degFilter,                       clear: () => { setDegFilter(""); loadPrograms(langFilter, "", search); } });
+  if (cityFilter)      activeFilters.push({ label: `Şehir: ${cityFilter}`,          clear: () => setCityFilter("") });
+  if (admissionFilter) activeFilters.push({ label: admissionFilter === "direct" ? "Direkt Kabul" : "Şartlı Kabul", clear: () => setAdmissionFilter("") });
+  if (ncFilter)        activeFilters.push({ label: ncFilter === "free" ? "NC Yok" : "NC Var",  clear: () => setNcFilter("") });
+  if (deadlineFilter)  activeFilters.push({ label: `≤${deadlineFilter}g deadline`,  clear: () => setDeadlineFilter("") });
+  if (uniAssistFilter) activeFilters.push({ label: uniAssistFilter === "required" ? "uni-assist gerekli" : "uni-assist yok", clear: () => setUniAssistFilter("") });
+
+  const clearAll = () => {
+    setSearch(""); setLangFilter(""); setDegFilter(""); setCityFilter("");
+    setAdmissionFilter(""); setNcFilter(""); setDeadlineFilter(""); setUniAssistFilter("");
+    loadPrograms("", "", "");
+  };
+
+  const handleClean = async () => {
+    if (!confirm("30 günden eski kayıtlar silinecek. Devam?")) return;
+    setCleaning(true);
+    const r = await fetch("/api/programs", { method: "DELETE" });
+    const d = await r.json();
+    setCleaning(false);
+    alert(`${d.deleted} eski kayıt silindi.`);
+    loadStats(); loadPrograms();
+  };
 
   const exportCsv = () => {
     const headers = ["Üniversite","Şehir","Program","Derece","Dil","Almanca Şartı","İngilizce Şartı","NC","Min GPA","WiSe Deadline","SoSe Deadline","uni-assist","Şartlı Kabul","Güven","Güncelleme","URL"];
@@ -214,7 +270,6 @@ export default function ProgramsPage() {
     a.click();
   };
 
-  const degrees = [...new Set(programs.map(p => p.degree).filter(Boolean))].sort();
   const noDb = (stats?.total ?? 0) === 0;
 
   return (
@@ -292,60 +347,153 @@ export default function ProgramsPage() {
       ) : (
         <div className="space-y-3">
 
-          {/* Filtreler */}
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="text"
-              placeholder="Üniversite, program veya şehir ara..."
-              value={search}
-              onChange={e => { const v = e.target.value; setSearch(v); if (v.length===0||v.length>=2) loadPrograms(langFilter,degFilter,v); }}
-              className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          {/* Filtre paneli */}
+          <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
 
-            <FilterSelect value={langFilter} onChange={v => { setLangFilter(v); loadPrograms(v,degFilter,search); }} label="Dil">
-              <option value="">Tüm diller</option>
-              <option value="İngilizce">İngilizce</option>
-              <option value="Almanca">Almanca</option>
-            </FilterSelect>
+            {/* Satır 1: Arama + filtre toggle */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Üniversite, program veya şehir ara..."
+                value={search}
+                onChange={e => { const v = e.target.value; setSearch(v); if (v.length===0||v.length>=2) loadPrograms(langFilter,degFilter,v); }}
+                className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                onClick={() => setShowFilters(v => !v)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  showFilters || activeFilters.length > 0
+                    ? "border-blue-300 bg-blue-50 text-blue-700"
+                    : "border-slate-200 text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                Filtreler
+                {activeFilters.length > 0 && (
+                  <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {activeFilters.length}
+                  </span>
+                )}
+              </button>
+            </div>
 
-            {degrees.length > 0 && (
-              <FilterSelect value={degFilter} onChange={v => { setDegFilter(v); loadPrograms(langFilter,v,search); }} label="Derece">
-                <option value="">Tüm dereceler</option>
-                {degrees.map(d => <option key={d} value={d}>{d}</option>)}
-              </FilterSelect>
+            {/* Filtreler (genişletilebilir) */}
+            {showFilters && (
+              <div className="space-y-3 pt-1 border-t border-slate-100">
+
+                {/* Satır 2: Program özellikleri */}
+                <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Kabul Türü</label>
+                    <FilterSelect value={admissionFilter} onChange={v => setAdmissionFilter(v as AdmissionFilter)} label="Kabul Türü">
+                      <option value="">Tümü</option>
+                      <option value="direct">Direkt Kabul</option>
+                      <option value="conditional">Şartlı Kabul</option>
+                    </FilterSelect>
+                  </div>
+
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">NC Durumu</label>
+                    <FilterSelect value={ncFilter} onChange={v => setNcFilter(v as NcFilter)} label="NC Durumu">
+                      <option value="">Tümü</option>
+                      <option value="free">NC Yok (Zulassungsfrei)</option>
+                      <option value="restricted">NC Var</option>
+                    </FilterSelect>
+                  </div>
+
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Deadline</label>
+                    <FilterSelect value={deadlineFilter} onChange={v => setDeadlineFilter(v as DeadlineFilter)} label="Deadline">
+                      <option value="">Tüm tarihler</option>
+                      <option value="7">7 gün içinde</option>
+                      <option value="14">14 gün içinde</option>
+                      <option value="30">30 gün içinde</option>
+                      <option value="60">60 gün içinde</option>
+                    </FilterSelect>
+                  </div>
+
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">uni-assist</label>
+                    <FilterSelect value={uniAssistFilter} onChange={v => setUniAssistFilter(v as UniAssistFilter)} label="uni-assist">
+                      <option value="">Tümü</option>
+                      <option value="required">uni-assist gerekli</option>
+                      <option value="not_required">uni-assist yok</option>
+                    </FilterSelect>
+                  </div>
+                </div>
+
+                {/* Satır 3: Program bilgileri */}
+                <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Eğitim Dili</label>
+                    <FilterSelect value={langFilter} onChange={v => { setLangFilter(v); loadPrograms(v,degFilter,search); }} label="Dil">
+                      <option value="">Tüm diller</option>
+                      <option value="İngilizce">İngilizce</option>
+                      <option value="Almanca">Almanca</option>
+                    </FilterSelect>
+                  </div>
+
+                  {degrees.length > 0 && (
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Derece</label>
+                      <FilterSelect value={degFilter} onChange={v => { setDegFilter(v); loadPrograms(langFilter,v,search); }} label="Derece">
+                        <option value="">Tüm dereceler</option>
+                        {degrees.map(d => <option key={d} value={d}>{d}</option>)}
+                      </FilterSelect>
+                    </div>
+                  )}
+
+                  {cities.length > 0 && (
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Şehir</label>
+                      <FilterSelect value={cityFilter} onChange={v => setCityFilter(v)} label="Şehir">
+                        <option value="">Tüm şehirler</option>
+                        {cities.slice(0, 60).map(c => <option key={c} value={c}>{c}</option>)}
+                      </FilterSelect>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Sırala</label>
+                    <FilterSelect value={`${sortKey}:${sortDir}`} onChange={v => {
+                      const [k,d] = v.split(":") as [typeof sortKey, typeof sortDir];
+                      setSortKey(k); setSortDir(d);
+                    }} label="Sırala">
+                      <option value="last_scraped:desc">En yeni</option>
+                      <option value="last_scraped:asc">En eski</option>
+                      <option value="university:asc">Üniversite A→Z</option>
+                      <option value="university:desc">Üniversite Z→A</option>
+                      <option value="deadline_wise:asc">WiSe erken</option>
+                      <option value="deadline_sose:asc">SoSe erken</option>
+                      <option value="confidence:desc">Güvenilirlik ↓</option>
+                    </FilterSelect>
+                  </div>
+                </div>
+              </div>
             )}
 
-            <FilterSelect value={uniAssistFilter} onChange={v => setUniAssistFilter(v as "" | "required" | "not_required")} label="uni-assist">
-              <option value="">uni-assist: hepsi</option>
-              <option value="required">uni-assist gerekli</option>
-              <option value="not_required">uni-assist yok</option>
-            </FilterSelect>
-
-            <FilterSelect value={`${sortKey}:${sortDir}`} onChange={v => {
-              const [k,d] = v.split(":") as [typeof sortKey, typeof sortDir];
-              setSortKey(k); setSortDir(d);
-            }} label="Sırala">
-              <option value="last_scraped:desc">En yeni</option>
-              <option value="last_scraped:asc">En eski</option>
-              <option value="university:asc">Üniversite A→Z</option>
-              <option value="university:desc">Üniversite Z→A</option>
-              <option value="deadline_wise:asc">WiSe erken</option>
-              <option value="deadline_sose:asc">SoSe erken</option>
-              <option value="confidence:desc">Güvenilirlik ↓</option>
-            </FilterSelect>
-
-            <button
-              onClick={() => setNcFreeOnly(v => !v)}
-              className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
-                ncFreeOnly ? "bg-green-100 border-green-300 text-green-700" : "border-slate-200 text-slate-500 hover:bg-slate-50"
-              }`}
-            >
-              NC&apos;siz
-            </button>
-
-            <span className="text-xs text-slate-400 ml-auto shrink-0">
-              {filtered.length.toLocaleString("tr-TR")} / {totalRows.toLocaleString("tr-TR")} program
-            </span>
+            {/* Aktif filtre çipleri + sonuç sayısı */}
+            <div className="flex flex-wrap items-center gap-2">
+              {activeFilters.map((f, i) => (
+                <button
+                  key={i}
+                  onClick={f.clear}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 text-xs font-medium hover:bg-blue-200 transition-colors"
+                >
+                  {f.label}
+                  <X className="w-3 h-3" />
+                </button>
+              ))}
+              {activeFilters.length > 1 && (
+                <button onClick={clearAll} className="text-xs text-slate-400 hover:text-red-500 transition-colors">
+                  Tümünü temizle
+                </button>
+              )}
+              <span className="text-xs text-slate-400 ml-auto shrink-0">
+                <span className="font-semibold text-slate-600">{filtered.length.toLocaleString("tr-TR")}</span>
+                {" / "}{totalRows.toLocaleString("tr-TR")} program
+              </span>
+            </div>
           </div>
 
           {/* Tablo */}
@@ -396,6 +544,11 @@ export default function ProgramsPage() {
               {filtered.length === 0 && (
                 <div className="text-center py-12 text-slate-400">
                   <p>Eşleşen program bulunamadı</p>
+                  {activeFilters.length > 0 && (
+                    <button onClick={clearAll} className="mt-2 text-sm text-blue-500 hover:underline">
+                      Tüm filtreleri temizle
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -483,7 +636,7 @@ function ProgramRow({ p }: { p: Program }) {
       </td>
 
       {/* NC / Kabul */}
-      <td className="px-4 py-3 align-top" style={{ minWidth: "110px" }}>
+      <td className="px-4 py-3 align-top" style={{ minWidth: "130px" }}>
         <div className="flex flex-col gap-1">
           <NcBadge nc={p.nc_value} />
           {!!p.uni_assist && (
@@ -491,9 +644,13 @@ function ProgramRow({ p }: { p: Program }) {
               uni-assist
             </span>
           )}
-          {!!p.conditional_admission && (
+          {!!p.conditional_admission ? (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 font-medium w-fit">
               şartlı kabul
+            </span>
+          ) : (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 font-medium w-fit">
+              direkt kabul
             </span>
           )}
         </div>
