@@ -2,8 +2,9 @@
 reporter.py — AES marka renkleriyle Word ve Excel raporu üret.
 """
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date
 from typing import List
+import re as _re
 
 try:
     from docx import Document
@@ -31,6 +32,76 @@ AES_GRAY  = RGBColor(0x80, 0x80, 0x80) if DOCX_OK else None   # Gri (footer)
 COLOR_UYGUN     = RGBColor(0x16, 0xa3, 0x4a) if DOCX_OK else None  # Yeşil
 COLOR_SARTLI    = RGBColor(0xca, 0x8a, 0x04) if DOCX_OK else None  # Sarı
 COLOR_UYGUN_DEG = RGBColor(0xdc, 0x26, 0x26) if DOCX_OK else None  # Kırmızı
+
+_MONTHS = {
+    "januar": 1, "februar": 2, "märz": 3, "april": 4, "mai": 5, "juni": 6,
+    "juli": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "dezember": 12,
+    "january": 1, "february": 2, "march": 3, "may": 5, "june": 6, "july": 7,
+    "october": 10, "december": 12,
+}
+
+
+def _parse_deadline(raw: str | None) -> date | None:
+    """Başvuru tarihini parse et."""
+    if not raw:
+        return None
+    today = date.today()
+    # DD.MM.YYYY
+    m = _re.search(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", raw)
+    if m:
+        try:
+            return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            pass
+    # DD. MonthName YYYY
+    m = _re.search(r"(\d{1,2})\.\s*([A-Za-zä]+)\s*(\d{4})?", raw, _re.IGNORECASE)
+    if m:
+        mo = _MONTHS.get(m.group(2).lower())
+        if mo:
+            yr = int(m.group(3)) if m.group(3) else today.year
+            try:
+                d = date(yr, mo, int(m.group(1)))
+                if not m.group(3) and d < today:
+                    d = date(yr + 1, mo, int(m.group(1)))
+                return d
+            except ValueError:
+                pass
+    # DD.MM
+    m = _re.match(r"^(\d{1,2})\.(\d{1,2})\.?$", raw.strip())
+    if m:
+        try:
+            d = date(today.year, int(m.group(2)), int(m.group(1)))
+            if d < today:
+                d = date(today.year + 1, int(m.group(2)), int(m.group(1)))
+            return d
+        except ValueError:
+            pass
+    return None
+
+
+def _deadline_label(raw: str | None) -> tuple[str, str | None]:
+    """
+    Tarihi okunabilir etikete ve urgency rengine dönüştür.
+    Returns: (label_text, hex_color_or_None)
+    """
+    if not raw:
+        return ("—", None)
+    d = _parse_deadline(raw)
+    if not d:
+        return (raw, None)
+    days = (d - date.today()).days
+    if days < -30:
+        return (f"{raw} (geçmiş)", "808080")       # gri
+    if days < 0:
+        return (f"{raw} (yakın geçmiş)", "ca8a04")  # amber
+    if days <= 14:
+        return (f"⚠️ {raw} — {days} gün kaldı!", "dc2626")  # kırmızı
+    if days <= 30:
+        return (f"{raw} — {days} gün kaldı", "ca8a04")     # amber
+    if days <= 90:
+        return (f"{raw} ({days} gün)", "2563eb")            # mavi
+    return (raw, None)
+
 
 STATUS_INFO = {
     "uygun":       {"label": "✅ UYGUN",        "color": COLOR_UYGUN,     "fill_hex": "dcfce7"},
@@ -139,11 +210,48 @@ def generate_word_report(programs: list, profile, output_dir: Path) -> Path | No
     _colored_run(ozet, f"❌ {len(uygun_deg)} uygun değil", COLOR_UYGUN_DEG)
     doc.add_paragraph()
 
+    # ── Öncelikli Başvurular (Top 5) ─────────────────────────────────
+    top_programs = sorted(
+        [p for p in programs if p.eligibility == "uygun"],
+        key=lambda p: (
+            # Yaklaşan deadline önce
+            (_parse_deadline(p.deadline_wise) or _parse_deadline(p.deadline_sose) or date(2099, 1, 1)),
+        )
+    )[:5]
+
+    if top_programs:
+        _add_heading(doc, "3. Öncelikli Başvuru Önerileri (Top 5)")
+        tp = doc.add_paragraph()
+        tp_r = tp.add_run(
+            "Aşağıdaki programlara öncelikli olarak başvurmanız önerilir "
+            "(deadline'a göre sıralı):"
+        )
+        tp_r.font.color.rgb = AES_GRAY
+        tp_r.font.size = Pt(10)
+
+        for rank, prog in enumerate(top_programs, 1):
+            li = doc.add_paragraph()
+            li_r = li.add_run(f"{rank}. {prog.university} — {prog.program}")
+            li_r.bold = True
+            li_r.font.color.rgb = AES_NAVY
+            details = []
+            if prog.city:
+                details.append(prog.city)
+            if prog.deadline_wise:
+                details.append(f"WiSe: {prog.deadline_wise}")
+            if prog.deadline_sose:
+                details.append(f"SoSe: {prog.deadline_sose}")
+            if details:
+                li.add_run("  │  " + " · ".join(details)).font.color.rgb = AES_GRAY
+        doc.add_paragraph()
+
     # ── Program Listeleri ─────────────────────────────────────────────
+    # Top 5 varsa bölüm numaraları kaymıştır
+    base_num = 4 if top_programs else 3
     groups = [
-        (uygun,     "uygun",       3),
-        (sartli,    "sartli",      4),
-        (uygun_deg, "uygun_degil", 5),
+        (uygun,     "uygun",       base_num),
+        (sartli,    "sartli",      base_num + 1),
+        (uygun_deg, "uygun_degil", base_num + 2),
     ]
 
     for group, status_key, section_num in groups:
@@ -161,32 +269,66 @@ def generate_word_report(programs: list, profile, output_dir: Path) -> Path | No
             run.font.size      = Pt(12)
             run.font.color.rgb = AES_NAVY
 
+            wise_label, wise_color = _deadline_label(prog.deadline_wise)
+            sose_label, sose_color = _deadline_label(prog.deadline_sose)
+
             rows_data = [
-                ("Şehir",           prog.city or "—"),
-                ("Program Dili",    prog.language or "—"),
-                ("WiSe Deadline",   prog.deadline_wise or "—"),
-                ("SoSe Deadline",   prog.deadline_sose or "—"),
-                ("Almanca Şartı",   prog.german_requirement or "—"),
-                ("İngilizce Şartı", prog.english_requirement or "—"),
-                ("NC Değeri",       prog.nc_value or "Zulassungsfrei"),
-                ("uni-assist",      "Gerekli ✓" if prog.uni_assist_required else "Direkt başvuru"),
-                ("Şartlı Kabul",    "Mevcut" if prog.conditional_admission else "Yok"),
-                ("Değerlendirme",   prog.eligibility_reason or "—"),
+                ("Şehir",           prog.city or "—",        None),
+                ("Program Dili",    prog.language or "—",    None),
+                ("WiSe Deadline",   wise_label,              wise_color),
+                ("SoSe Deadline",   sose_label,              sose_color),
+                ("Almanca Şartı",   prog.german_requirement or "—",  None),
+                ("İngilizce Şartı", prog.english_requirement or "—", None),
+                ("NC Değeri",       prog.nc_value or "Zulassungsfrei", None),
+                ("Min. GPA (DE)",   str(prog.min_gpa) if prog.min_gpa else "—", None),
+                ("uni-assist",      "Gerekli ✓" if prog.uni_assist_required else "Direkt başvuru", None),
+                ("Şartlı Kabul",    "Mevcut" if prog.conditional_admission else "Yok", None),
+                ("Değerlendirme",   prog.eligibility_reason or "—",  None),
             ]
             t = doc.add_table(rows=len(rows_data), cols=2)
             t.style = "Table Grid"
-            for i, (k, v) in enumerate(rows_data):
-                t.cell(i, 0).text = k
-                t.cell(i, 1).text = str(v)
-                runs_ = t.cell(i, 0).paragraphs[0].runs
-                if runs_:
-                    runs_[0].bold = True
+            for i, (k, v, cell_color) in enumerate(rows_data):
+                cell0 = t.cell(i, 0)
+                cell1 = t.cell(i, 1)
+                cell0.text = k
+                cell1.text = str(v)
+                runs0 = cell0.paragraphs[0].runs
+                if runs0:
+                    runs0[0].bold = True
+                # Deadline hücresi renklendirme
+                if cell_color:
+                    try:
+                        from docx.oxml.ns import qn
+                        from docx.oxml import OxmlElement
+                        tc = cell1._tc
+                        tcPr = tc.get_or_add_tcPr()
+                        shd = OxmlElement("w:shd")
+                        shd.set(qn("w:val"),   "clear")
+                        shd.set(qn("w:color"), "auto")
+                        shd.set(qn("w:fill"),  cell_color)
+                        tcPr.append(shd)
+                        # Metin rengini de ayarla
+                        run1 = cell1.paragraphs[0].runs
+                        if run1:
+                            r, g, b = int(cell_color[0:2], 16), int(cell_color[2:4], 16), int(cell_color[4:6], 16)
+                            run1[0].font.color.rgb = RGBColor(r, g, b)
+                            run1[0].bold = True
+                    except Exception:
+                        pass  # Renklendirme başarısız olursa devam et
 
             if prog.issues:
                 ip = doc.add_paragraph()
                 ir = ip.add_run("⚠️ Eksiklikler: " + " | ".join(prog.issues))
                 ir.font.color.rgb = COLOR_SARTLI
                 ir.font.size      = Pt(10)
+
+            if prog.passed_checks:
+                # İlk 3 geçen kontrol
+                for check in prog.passed_checks[:3]:
+                    cp = doc.add_paragraph()
+                    cr = cp.add_run(f"✓ {check}")
+                    cr.font.color.rgb = COLOR_UYGUN
+                    cr.font.size      = Pt(9)
 
             if prog.url:
                 up = doc.add_paragraph()
@@ -200,7 +342,7 @@ def generate_word_report(programs: list, profile, output_dir: Path) -> Path | No
     fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     fr = fp.add_run(
         f"Bu rapor AES — Almanya Eğitim Serüveni tarafından oluşturulmuştur.\n"
-        f"aes-kompass.com | Bremen, Germany | {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+        f"almanyaegitimseruveni.com | Bremen, Germany | {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
         f"⚠️  Bilgiler araştırma tarihindeki durumu yansıtır. Başvuru öncesi üniversite sitelerini doğrulayınız."
     )
     fr.font.color.rgb = AES_GRAY
@@ -342,7 +484,7 @@ def generate_excel_report(programs: list, profile, output_dir: Path) -> Path | N
         ("❌ Uygun Değil",    sum(1 for p in programs if p.eligibility == "uygun_degil")),
         ("",                   ""),
         ("Rapor Tarihi",       datetime.now().strftime("%d.%m.%Y %H:%M")),
-        ("Kaynak",             "AES — aes-kompass.com"),
+        ("Kaynak",             "AES — almanyaegitimseruveni.com"),
     ]
     for r, (label, value) in enumerate(summary_data, 1):
         a = ws2.cell(row=r, column=1, value=label)

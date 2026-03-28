@@ -23,40 +23,46 @@ except ImportError:
 
 # ─── GPA Dönüşüm ─────────────────────────────────────────────────────────────
 
-def _tr_100_to_40(grade_100: float) -> float:
-    """Türkiye 100 puan skalasını 4.0 skalasına çevir."""
-    if grade_100 >= 90: return 4.0
-    if grade_100 >= 85: return 3.7
-    if grade_100 >= 80: return 3.3
-    if grade_100 >= 75: return 3.0
-    if grade_100 >= 70: return 2.7
-    if grade_100 >= 65: return 2.3
-    if grade_100 >= 60: return 2.0
-    if grade_100 >= 55: return 1.7
-    if grade_100 >= 50: return 1.3
-    return 1.0
+def _bavarian_formula(grade: float, nmax: float, npass: float) -> float:
+    """
+    Bavyera Formülü: X = 1 + 3 × (Nmax - Nd) / (Nmax - Npass)
+
+    Türkiye'de kullanılan geçme notları:
+      100 skalası → Npass = 50  (yeterli = 50/100)
+       4.0 skalası → Npass = 2.0 (CC = 60/100 karşılığı)
+
+    Almanya skalası: 1.0 = Sehr gut, 2.0 = Gut, 3.0 = Befriedigend, 4.0 = Ausreichend
+    """
+    if nmax == npass:
+        return 4.0
+    result = 1.0 + 3.0 * (nmax - grade) / (nmax - npass)
+    return round(max(1.0, min(4.0, result)), 2)
 
 
 def convert_to_german_scale(raw: str) -> Optional[float]:
     """
-    Her türlü GPA string'ini Almanya 1.0-5.0 skalasına çevir.
+    Her türlü GPA string'ini Almanya 1.0-4.0 skalasına çevir (Bavyera Formülü).
     Almanya: 1.0=Sehr gut, 2.0=Gut, 3.0=Befriedigend, 4.0=Ausreichend
+
+    Desteklenen formatlar:
+      "85/100", "3.2/4.0", "85.5/100", "3.25 / 4.00"
+      "2.5 (DE)", "2.5"   → zaten Almanya skalasında
     """
     if not raw:
         return None
     raw = raw.strip().replace(",", ".")
 
-    # "3.2/4.0" veya "3.2 / 4.0" formatı
+    # "değer/skala" formatı: "3.2/4.0", "85/100"
     m = re.match(r"([\d.]+)\s*/\s*([\d.]+)", raw)
     if m:
         try:
             value, scale = float(m.group(1)), float(m.group(2))
-            if scale == 4.0:
-                # Bavyera formülü
-                return round(1.0 + 3.0 * (4.0 - value) / (4.0 - 1.0), 1)
-            if scale == 100 or scale == 100.0:
-                gpa_40 = _tr_100_to_40(value)
-                return round(1.0 + 3.0 * (4.0 - gpa_40) / (4.0 - 1.0), 1)
+            if abs(scale - 4.0) < 0.1:
+                # 4.0 skalası — Türkiye geçme notu = 2.0 (CC / 60/100)
+                return _bavarian_formula(value, nmax=4.0, npass=2.0)
+            if scale >= 99:
+                # 100 skalası — Türkiye geçme notu = 50
+                return _bavarian_formula(value, nmax=100.0, npass=50.0)
         except (ValueError, ZeroDivisionError):
             pass
 

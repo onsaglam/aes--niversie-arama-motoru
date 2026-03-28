@@ -106,3 +106,49 @@ def search_nc_value(university: str, program: str, year: int = 0) -> list[dict]:
         year = datetime.now().year
     query = f'Numerus Clausus {university} {program} {year} NC Wartesemester'
     return search(query, max_results=5)
+
+
+def search_mastersportal(field: str, degree: str = "Master", eng_field: str = "") -> list[dict]:
+    """MastersPortal.eu / BachelorsPortal.eu'dan program ara."""
+    portal = "mastersportal.eu" if degree.lower() == "master" else "bachelorsportal.eu"
+    search_field = eng_field if eng_field else field
+    queries = [
+        f'site:{portal} "{search_field}" Germany admission requirements deadline language',
+        f'site:{portal} {search_field} Deutschland university',
+    ]
+    if eng_field and eng_field != field:
+        queries.append(f'site:{portal} "{field}" Germany university')
+    results = []
+    seen: set[str] = set()
+    for q in queries:
+        try:
+            for r in search(q, max_results=10):
+                url = r.get("url", "")
+                if url not in seen:
+                    seen.add(url)
+                    results.append(r)
+        except Exception:
+            pass
+    return results
+
+
+def search_forums(university: str, program: str) -> list[dict]:
+    """Reddit ve study-abroad forumlarından gerçek başvuru deneyimleri ara."""
+    query = (
+        f'"{university}" "{program}" admission requirements Germany experience '
+        f'site:reddit.com OR site:studying-in-germany.org OR site:alumniportal-deutschland.org'
+    )
+    try:
+        return search(query, max_results=5)
+    except Exception:
+        return []
+
+
+def search_hochschulstart_programs(field: str, degree: str = "Master") -> list[dict]:
+    """hochschulstart.de ve NC veritabanlarından program + NC değerleri ara."""
+    query = (
+        f'{field} {degree} NC Numerus Clausus Wartesemester Deutschland Zulassung '
+        f'site:hochschulstart.de OR site:stiftung-hochschulzulassung.de OR '
+        f'site:nc-werte.de OR site:zulassungszahlen.net'
+    )
+    return search(query, max_results=8)

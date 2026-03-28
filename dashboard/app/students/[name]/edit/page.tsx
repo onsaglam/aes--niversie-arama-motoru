@@ -65,9 +65,56 @@ function convertGpaToGerman(raw: string): string | null {
 }
 const ENGLISH_LEVELS = ["", "Yok", "B2", "C1", "C2", "IELTS 5.5", "IELTS 6.0", "IELTS 6.5", "IELTS 7.0", "IELTS 7.5", "IELTS 8.0", "TOEFL 72", "TOEFL 80", "TOEFL 88", "TOEFL 100", "TOEFL 110", "Cambridge B2", "Cambridge C1", "Cambridge C2"];
 const DEGREE_TYPES = ["Master", "Bachelor", "PhD", "Ausbildung"];
-const PROGRAM_LANGUAGES = ["", "Almanca", "İngilizce", "Her İkisi"];
 const UNIVERSITY_TYPES = ["", "TU (Teknik Üniversite)", "FH (Fachhochschule)", "Volluniversität", "Fark etmez"];
 const START_SEMESTERS = ["", "SoSe 2026", "WiSe 2026/27", "SoSe 2027", "WiSe 2027/28", "SoSe 2028"];
+
+function Field({ label, help, children }: { label: string; help?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
+      {help && <p className="text-xs text-slate-400 mb-1">{help}</p>}
+      {children}
+    </div>
+  );
+}
+
+function Input({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+    />
+  );
+}
+
+function SelectField({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: string[] }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+    >
+      {options.map((o) => <option key={o} value={o}>{o || "— Seçiniz —"}</option>)}
+    </select>
+  );
+}
+
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <label className="flex items-center gap-3 cursor-pointer">
+      <div
+        onClick={() => onChange(!checked)}
+        className={`relative w-10 h-6 rounded-full transition-colors ${checked ? "bg-blue-600" : "bg-slate-300"}`}
+      >
+        <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-5" : "translate-x-1"}`} />
+      </div>
+      <span className="text-sm text-slate-700">{label}</span>
+    </label>
+  );
+}
 
 export default function EditProfilePage() {
   const params = useParams();
@@ -115,46 +162,6 @@ export default function EditProfilePage() {
 
   if (!profile) return <div className="p-8 text-slate-500">Yükleniyor...</div>;
 
-  const Field = ({ label, help, children }: { label: string; help?: string; children: React.ReactNode }) => (
-    <div>
-      <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
-      {help && <p className="text-xs text-slate-400 mb-1">{help}</p>}
-      {children}
-    </div>
-  );
-
-  const Input = ({ field, placeholder }: { field: keyof Profile; placeholder?: string }) => (
-    <input
-      type="text"
-      value={profile[field] as string}
-      onChange={(e) => update(field, e.target.value)}
-      placeholder={placeholder}
-      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-    />
-  );
-
-  const Select = ({ field, options }: { field: keyof Profile; options: string[] }) => (
-    <select
-      value={profile[field] as string}
-      onChange={(e) => update(field, e.target.value)}
-      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-    >
-      {options.map((o) => <option key={o} value={o}>{o || "— Seçiniz —"}</option>)}
-    </select>
-  );
-
-  const Toggle = ({ field, label }: { field: keyof Profile; label: string }) => (
-    <label className="flex items-center gap-3 cursor-pointer">
-      <div
-        onClick={() => update(field, !profile[field])}
-        className={`relative w-10 h-6 rounded-full transition-colors ${profile[field] ? "bg-blue-600" : "bg-slate-300"}`}
-      >
-        <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${profile[field] ? "translate-x-5" : "translate-x-1"}`} />
-      </div>
-      <span className="text-sm text-slate-700">{label}</span>
-    </label>
-  );
-
   return (
     <div className="max-w-3xl mx-auto">
       {/* Başlık */}
@@ -190,8 +197,8 @@ export default function EditProfilePage() {
             <span className="text-lg">👤</span> Kişisel Bilgiler
           </h2>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Ad Soyad"><Input field="name" /></Field>
-            <Field label="Milliyet"><Input field="nationality" placeholder="Türk" /></Field>
+            <Field label="Ad Soyad"><Input value={profile.name} onChange={(v) => update("name", v)} /></Field>
+            <Field label="Milliyet"><Input value={profile.nationality} onChange={(v) => update("nationality", v)} placeholder="Türk" /></Field>
           </div>
         </section>
 
@@ -202,13 +209,13 @@ export default function EditProfilePage() {
           </h2>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Mevcut / Son Üniversite" help="Türkiye'deki okul adı">
-              <Input field="current_university" placeholder="İstanbul Teknik Üniversitesi" />
+              <Input value={profile.current_university} onChange={(v) => update("current_university", v)} placeholder="İstanbul Teknik Üniversitesi" />
             </Field>
             <Field label="Bölüm">
-              <Input field="department" placeholder="Elektrik-Elektronik Mühendisliği" />
+              <Input value={profile.department} onChange={(v) => update("department", v)} placeholder="Elektrik-Elektronik Mühendisliği" />
             </Field>
             <Field label="Not Ortalaması" help="örn: 3.2/4.0 veya 75/100 veya 2.5 (DE)">
-              <Input field="gpa_turkish" placeholder="3.2/4.0" />
+              <Input value={profile.gpa_turkish} onChange={(v) => update("gpa_turkish", v)} placeholder="3.2/4.0" />
               {profile.gpa_turkish && (() => {
                 const de = convertGpaToGerman(profile.gpa_turkish);
                 return de ? (
@@ -224,11 +231,11 @@ export default function EditProfilePage() {
               })()}
             </Field>
             <Field label="Mezuniyet Tarihi">
-              <Input field="graduation_date" placeholder="Haziran 2025" />
+              <Input value={profile.graduation_date} onChange={(v) => update("graduation_date", v)} placeholder="Haziran 2025" />
             </Field>
             <div className="col-span-2">
               <Field label="Diploma Durumu">
-                <Select field="diploma_status" options={["", "Alındı", "Haziran 2026'da alınacak", "Ocak 2027'de alınacak", "Haziran 2027'de alınacak", "Devam ediyor"]} />
+                <SelectField value={profile.diploma_status} onChange={(v) => update("diploma_status", v)} options={["", "Alındı", "Haziran 2026'da alınacak", "Ocak 2027'de alınacak", "Haziran 2027'de alınacak", "Devam ediyor"]} />
               </Field>
             </div>
           </div>
@@ -244,10 +251,10 @@ export default function EditProfilePage() {
           </p>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Almanca Sertifika" help="Yoksa 'Yok' seçin">
-              <Select field="german_level" options={GERMAN_LEVELS} />
+              <SelectField value={profile.german_level} onChange={(v) => update("german_level", v)} options={GERMAN_LEVELS} />
             </Field>
             <Field label="İngilizce Sertifika" help="Yoksa 'Yok' seçin">
-              <Select field="english_level" options={ENGLISH_LEVELS} />
+              <SelectField value={profile.english_level} onChange={(v) => update("english_level", v)} options={ENGLISH_LEVELS} />
             </Field>
           </div>
           <div className="mt-3 p-3 rounded-lg bg-slate-50 text-xs text-slate-600">
@@ -266,23 +273,23 @@ export default function EditProfilePage() {
         {/* HEDEF */}
         <section className="bg-white rounded-xl border border-slate-200 p-6">
           <h2 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-            <span className="text-lg">🎯</span> Almanya'da Hedef
+            <span className="text-lg">🎯</span> Almanya&apos;da Hedef
           </h2>
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <Field label="İstenen Alan / Bölüm" help="Almanya'da okumak istediği alan">
-                <Input field="desired_field" placeholder="örn: Electrical Engineering, Artificial Intelligence" />
+                <Input value={profile.desired_field} onChange={(v) => update("desired_field", v)} placeholder="örn: Electrical Engineering, Artificial Intelligence" />
               </Field>
             </div>
             <Field label="Derece Türü">
-              <Select field="degree_type" options={DEGREE_TYPES} />
+              <SelectField value={profile.degree_type} onChange={(v) => update("degree_type", v)} options={DEGREE_TYPES} />
             </Field>
             <Field label="Başlangıç Dönemi">
-              <Select field="start_semester" options={START_SEMESTERS} />
+              <SelectField value={profile.start_semester} onChange={(v) => update("start_semester", v)} options={START_SEMESTERS} />
             </Field>
             <div className="col-span-2">
               <Field label="Tercih Edilen Şehirler" help="Virgülle ayır. Fark etmez ise boş bırak.">
-                <Input field="preferred_cities" placeholder="München, Berlin, Bremen" />
+                <Input value={profile.preferred_cities} onChange={(v) => update("preferred_cities", v)} placeholder="München, Berlin, Bremen" />
               </Field>
             </div>
           </div>
@@ -295,13 +302,13 @@ export default function EditProfilePage() {
           </h2>
           <div className="grid grid-cols-2 gap-4 mb-4">
             <Field label="Üniversite Türü">
-              <Select field="university_type" options={UNIVERSITY_TYPES} />
+              <SelectField value={profile.university_type} onChange={(v) => update("university_type", v)} options={UNIVERSITY_TYPES} />
             </Field>
           </div>
           <div className="space-y-3">
-            <Toggle field="free_tuition_important" label="Ücretsiz / düşük ücretli programlar öncelikli" />
-            <Toggle field="accept_nc" label="NC'li (kısıtlı kontenjan) bölümler kabul edilsin" />
-            <Toggle field="conditional_admission" label="Şartlı kabul (Bedingte Zulassung) kabul edilsin" />
+            <Toggle checked={profile.free_tuition_important} onChange={(v) => update("free_tuition_important", v)} label="Ücretsiz / düşük ücretli programlar öncelikli" />
+            <Toggle checked={profile.accept_nc} onChange={(v) => update("accept_nc", v)} label="NC'li (kısıtlı kontenjan) bölümler kabul edilsin" />
+            <Toggle checked={profile.conditional_admission} onChange={(v) => update("conditional_admission", v)} label="Şartlı kabul (Bedingte Zulassung) kabul edilsin" />
           </div>
           <p className="mt-3 text-xs text-amber-600 font-medium">
             🏛️ Sadece devlet üniversiteleri araştırılır — özel üniversiteler otomatik filtrelenir.

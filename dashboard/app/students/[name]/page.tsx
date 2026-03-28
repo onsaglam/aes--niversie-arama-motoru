@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -7,6 +7,7 @@ import {
   ArrowLeft, Play, Zap, Download, ExternalLink,
   CheckCircle2, AlertTriangle, XCircle, HelpCircle,
   FileText, FileSpreadsheet, Pencil, Trash2,
+  FileEdit, X, Loader2, BookmarkCheck, Upload,
 } from "lucide-react";
 
 interface Program {
@@ -24,6 +25,7 @@ interface Program {
   german_requirement: string | null;
   english_requirement: string | null;
   nc_value: string | null;
+  min_gpa: number | null;
   uni_assist_required: boolean;
   conditional_admission: boolean;
   confidence: number;
@@ -67,6 +69,25 @@ interface Profile {
   conditional_admission: boolean;
   advisor_notes: string;
 }
+
+type TrackingStatus = "inceleniyor" | "basvurulacak" | "basvuruldu" | "kabul" | "red" | "beklemede";
+
+interface TrackingEntry {
+  university: string;
+  program: string;
+  status: TrackingStatus;
+  notes: string;
+  updated_at: string;
+}
+
+const TRACKING_CONFIG: Record<TrackingStatus, { label: string; badge: string; emoji: string }> = {
+  inceleniyor:  { label: "İnceleniyor",   badge: "bg-blue-100 text-blue-700",   emoji: "🔍" },
+  basvurulacak: { label: "Başvurulacak",  badge: "bg-purple-100 text-purple-700", emoji: "📋" },
+  basvuruldu:   { label: "Başvuruldu",    badge: "bg-indigo-100 text-indigo-700", emoji: "📤" },
+  kabul:        { label: "Kabul Edildi",  badge: "bg-green-100 text-green-700",  emoji: "🎉" },
+  red:          { label: "Reddedildi",    badge: "bg-red-100 text-red-700",      emoji: "❌" },
+  beklemede:    { label: "Beklemede",     badge: "bg-amber-100 text-amber-700",  emoji: "⏳" },
+};
 
 const ELIGIBILITY_CONFIG = {
   uygun:       { icon: CheckCircle2,   label: "✅ Uygun",       row: "bg-green-50",   badge: "bg-green-100 text-green-800",   order: 0 },
@@ -151,8 +172,86 @@ export default function StudentPage() {
   const logRef = useRef<HTMLDivElement>(null);
 
   const [notFound, setNotFound] = useState(false);
+  const [tracking, setTracking] = useState<TrackingEntry[]>([]);
+  const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
+  const [pendingUploadType, setPendingUploadType] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [motivModal, setMotivModal] = useState<{ university: string; program: string; language?: string; city?: string; url?: string } | null>(null);
+  const [motivLetter, setMotivLetter] = useState("");
+  const [motivLoading, setMotivLoading] = useState(false);
+  const [motivSavedAs, setMotivSavedAs] = useState<string | null>(null);
 
-  const fetchDetail = () => {
+  const trackingKey = (university: string, program: string) =>
+    `${university.toLowerCase()}::${program.toLowerCase().slice(0, 40)}`;
+
+  const getTracking = useCallback((university: string, program: string): TrackingEntry | undefined => {
+    return tracking.find((t) => trackingKey(t.university, t.program) === trackingKey(university, program));
+  }, [tracking]);
+
+  const updateTracking = async (university: string, program: string, status: TrackingStatus) => {
+    await fetch(`/api/students/${encodeURIComponent(name)}/tracking`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ university, program, status }),
+    });
+    // Reload tracking
+    fetch(`/api/students/${encodeURIComponent(name)}/tracking`)
+      .then((r) => r.json())
+      .then(setTracking)
+      .catch(() => {});
+  };
+
+  const handleDocUploadClick = (type: string) => {
+    setPendingUploadType(type);
+    if (fileInputRef.current) {
+      fileInputRef.current.accept = type === "transkript" || type === "dilBelgesi" || type === "cv"
+        ? ".pdf"
+        : ".pdf,.docx,.doc,.jpg,.jpeg,.png";
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !pendingUploadType) return;
+    setUploadingDoc(pendingUploadType);
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("type", pendingUploadType);
+    await fetch(`/api/students/${encodeURIComponent(name)}/documents`, { method: "POST", body: fd });
+    e.target.value = "";
+    setUploadingDoc(null);
+    setPendingUploadType(null);
+    fetchDetail();
+  };
+
+  const deleteDoc = async (filename: string) => {
+    if (!confirm(`"${filename}" silinecek. Emin misiniz?`)) return;
+    await fetch(`/api/students/${encodeURIComponent(name)}/documents?filename=${encodeURIComponent(filename)}`, { method: "DELETE" });
+    fetchDetail();
+  };
+
+  const generateMotivation = async () => {
+    if (!motivModal) return;
+    setMotivLoading(true);
+    setMotivLetter("");
+    try {
+      const res = await fetch(`/api/students/${encodeURIComponent(name)}/motivation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(motivModal),
+      });
+      const data = await res.json();
+      setMotivLetter(data.letter || data.error || "Hata oluştu");
+      setMotivSavedAs(data.saved_as || null);
+    } catch (e) {
+      setMotivLetter("Bağlantı hatası: " + String(e));
+    } finally {
+      setMotivLoading(false);
+    }
+  };
+
+  const fetchDetail = useCallback(() => {
     fetch(`/api/students/${encodeURIComponent(name)}`)
       .then((r) => {
         if (r.status === 404) { setNotFound(true); setLoading(false); return null; }
@@ -160,7 +259,7 @@ export default function StudentPage() {
       })
       .then((d) => { if (d) { setDetail(d); setLoading(false); } })
       .catch(() => setLoading(false));
-  };
+  }, [name]);
 
   useEffect(() => {
     fetchDetail();
@@ -168,7 +267,11 @@ export default function StudentPage() {
       .then((r) => r.json())
       .then(setProfile)
       .catch(() => {/* ignore */});
-  }, [name]);
+    fetch(`/api/students/${encodeURIComponent(name)}/tracking`)
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d)) setTracking(d); })
+      .catch(() => {});
+  }, [name, fetchDetail]);
 
   // Arka planda çalışan ajan varsa 5 saniyede bir yenile
   useEffect(() => {
@@ -261,6 +364,74 @@ export default function StudentPage() {
 
   return (
     <div className="space-y-6">
+
+      {/* Motivasyon Mektubu Modal */}
+      {motivModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+              <div>
+                <h2 className="font-semibold text-slate-800">Motivasyon Mektubu Taslağı</h2>
+                <p className="text-xs text-slate-400 mt-0.5">{motivModal.university} — {motivModal.program}</p>
+              </div>
+              <button onClick={() => { setMotivModal(null); setMotivLetter(""); setMotivSavedAs(null); }} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 flex-1 overflow-y-auto">
+              {!motivLetter && !motivLoading && (
+                <div className="text-center py-8">
+                  <FileEdit className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+                  <p className="text-sm text-slate-500 mb-4">
+                    Claude, öğrenci profiline ve program detaylarına göre kişiselleştirilmiş
+                    bir motivasyon mektubu taslağı oluşturacak.
+                  </p>
+                  <button
+                    onClick={generateMotivation}
+                    className="px-5 py-2.5 rounded-lg text-sm font-medium text-white"
+                    style={{ background: "var(--aes-navy)" }}
+                  >
+                    Taslak Oluştur
+                  </button>
+                </div>
+              )}
+              {motivLoading && (
+                <div className="flex items-center justify-center py-12 gap-3 text-slate-500">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="text-sm">Claude taslak oluşturuyor...</span>
+                </div>
+              )}
+              {motivLetter && (
+                <div className="space-y-4">
+                  <div className="bg-slate-50 rounded-xl p-4 text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-mono text-xs">
+                    {motivLetter}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => navigator.clipboard.writeText(motivLetter)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-200 text-slate-600 hover:bg-slate-50"
+                    >
+                      Kopyala
+                    </button>
+                    <button
+                      onClick={generateMotivation}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-200 text-blue-600 hover:bg-blue-50"
+                    >
+                      Yeniden Oluştur
+                    </button>
+                    {motivSavedAs && (
+                      <span className="text-xs text-green-600 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Kaydedildi: {motivSavedAs}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Breadcrumb */}
       <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-blue-600 transition-colors">
@@ -405,26 +576,74 @@ export default function StudentPage() {
           {/* Belgeler */}
           <div className="bg-white rounded-xl border border-slate-200 p-4">
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Belgeler</h3>
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={handleFileChange}
+            />
             <div className="grid grid-cols-1 gap-2 text-xs">
-              {[
-                { key: "profil",     label: "Profil (.docx)" },
-                { key: "transkript", label: "Transkript (.pdf)" },
-                { key: "dilBelgesi", label: "Dil Belgesi (.pdf)" },
-                { key: "motivasyon", label: "Motivasyon (.docx)" },
-                { key: "cv",         label: "CV (.pdf)" },
-              ].map(({ key, label }) => (
+              {/* Yüklenebilir belgeler */}
+              {([
+                { key: "transkript", label: "Transkript",  filename: "transkript.pdf",  exists: detail.documents.transkript },
+                { key: "dilBelgesi", label: "Dil Belgesi", filename: "dil_belgesi.pdf", exists: detail.documents.dilBelgesi },
+                { key: "cv",         label: "CV",          filename: "cv.pdf",          exists: detail.documents.cv },
+              ] as { key: string; label: string; filename: string; exists: boolean }[]).map(({ key, label, filename, exists }) => (
                 <div key={key} className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md ${
-                  detail.documents[key as keyof typeof detail.documents]
-                    ? "bg-green-50 text-green-700"
-                    : "bg-slate-50 text-slate-400"
+                  exists ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-400"
                 }`}>
-                  <div className={`w-2 h-2 rounded-full shrink-0 ${
-                    detail.documents[key as keyof typeof detail.documents] ? "bg-green-500" : "bg-slate-300"
-                  }`} />
-                  {label}
+                  <div className={`w-2 h-2 rounded-full shrink-0 ${exists ? "bg-green-500" : "bg-slate-300"}`} />
+                  <span className="flex-1 truncate">{label} (.pdf)</span>
+                  {exists ? (
+                    <button
+                      onClick={() => deleteDoc(filename)}
+                      title="Sil"
+                      className="ml-auto text-slate-300 hover:text-red-500 transition-colors shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleDocUploadClick(key)}
+                      disabled={uploadingDoc === key}
+                      title="Yükle"
+                      className="ml-auto text-slate-300 hover:text-blue-500 transition-colors shrink-0 disabled:opacity-50"
+                    >
+                      {uploadingDoc === key
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <Upload className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
+                </div>
+              ))}
+              {/* Otomatik belgeler (salt görüntüleme) */}
+              {[
+                { key: "profil",     label: "Profil",     exists: detail.documents.profil },
+                { key: "motivasyon", label: "Motivasyon", exists: detail.documents.motivasyon },
+              ].map(({ key, label, exists }) => (
+                <div key={key} className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md ${
+                  exists ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-400"
+                }`}>
+                  <div className={`w-2 h-2 rounded-full shrink-0 ${exists ? "bg-green-500" : "bg-slate-300"}`} />
+                  <span className="truncate">{label}</span>
+                  <span className="ml-auto text-slate-300 text-xs">otomatik</span>
                 </div>
               ))}
             </div>
+            {/* Ek belge yükle */}
+            <button
+              onClick={() => handleDocUploadClick("diger")}
+              disabled={!!uploadingDoc}
+              className="mt-3 w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md
+                         border border-dashed border-slate-200 text-slate-400 hover:border-blue-300
+                         hover:text-blue-500 transition-colors text-xs disabled:opacity-50"
+            >
+              {uploadingDoc === "diger"
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Upload className="w-3.5 h-3.5" />}
+              Ek belge yükle
+            </button>
           </div>
 
           {/* Raporlar */}
@@ -452,6 +671,29 @@ export default function StudentPage() {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Başvuru Takibi Özeti */}
+      {tracking.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+            <BookmarkCheck className="w-4 h-4 text-indigo-500" />
+            Başvuru Takibi ({tracking.length} program)
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+            {tracking.map((t) => {
+              const tcfg = TRACKING_CONFIG[t.status];
+              return (
+                <div key={`${t.university}::${t.program}`}
+                  className={`rounded-lg px-3 py-2 text-xs ${tcfg.badge} border border-current/10`}>
+                  <p className="font-medium truncate">{tcfg.emoji} {t.university}</p>
+                  <p className="text-xs opacity-75 truncate">{t.program}</p>
+                  <p className="font-semibold mt-0.5">{tcfg.label}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -575,9 +817,8 @@ export default function StudentPage() {
                     || p.english_requirement || p.nc_value || p.notes
                     || p.issues?.length || p.passed_checks?.length;
                   return (
-                    <>
+                    <React.Fragment key={rowKey}>
                       <tr
-                        key={rowKey}
                         className={`${cfg.row} transition-opacity ${hasDetails ? "cursor-pointer hover:opacity-90" : ""}`}
                         onClick={() => hasDetails ? setExpanded(isExpanded ? null : rowKey) : undefined}
                       >
@@ -608,6 +849,16 @@ export default function StudentPage() {
                                 <span className={`text-xs ${best.cls}`}>{best.text}</span>
                               ) : null;
                             })()}
+                            {(() => {
+                              const tr = getTracking(p.university, p.program);
+                              if (!tr) return null;
+                              const tcfg = TRACKING_CONFIG[tr.status];
+                              return (
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs w-fit ${tcfg.badge}`}>
+                                  {tcfg.emoji} {tcfg.label}
+                                </span>
+                              );
+                            })()}
                           </div>
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -631,44 +882,111 @@ export default function StudentPage() {
                       </tr>
                       {isExpanded && (
                         <tr key={`${rowKey}-detail`} className={cfg.row}>
-                          <td colSpan={6} className="px-4 pb-3">
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1.5 text-xs text-slate-600 pt-1 border-t border-slate-200/60">
-                              {p.language && <span><span className="text-slate-400">Dil:</span> {p.language}</span>}
-                              {p.deadline_wise && <span><span className="text-slate-400">WiSe:</span> {p.deadline_wise}</span>}
-                              {p.deadline_sose && <span><span className="text-slate-400">SoSe:</span> {p.deadline_sose}</span>}
-                              {p.german_requirement && <span><span className="text-slate-400">Almanca:</span> {p.german_requirement}</span>}
-                              {p.english_requirement && <span><span className="text-slate-400">İngilizce:</span> {p.english_requirement}</span>}
-                              {p.nc_value && <span><span className="text-slate-400">NC:</span> {p.nc_value}</span>}
-                              {p.uni_assist_required && <span className="text-amber-600">uni-assist gerekli</span>}
+                          <td colSpan={6} className="px-4 pb-4">
+                            <div className="pt-2 border-t border-slate-200/60 space-y-3">
+
+                              {/* Eligibility reason — en önemli bilgi, en üstte */}
+                              {p.eligibility_reason && (
+                                <div className={`rounded-lg px-3 py-2 text-xs leading-relaxed font-medium ${
+                                  p.eligibility === "uygun"       ? "bg-green-100 text-green-800 border border-green-200" :
+                                  p.eligibility === "sartli"      ? "bg-yellow-100 text-yellow-800 border border-yellow-200" :
+                                  p.eligibility === "uygun_degil" ? "bg-red-100 text-red-800 border border-red-200" :
+                                  "bg-slate-100 text-slate-600 border border-slate-200"
+                                }`}>
+                                  {p.eligibility_reason}
+                                </div>
+                              )}
+
+                              {/* Teknik detaylar — 2 sütun */}
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1.5 text-xs text-slate-600">
+                                {p.language        && <span><span className="text-slate-400">Dil:</span> {p.language}</span>}
+                                {p.deadline_wise   && (
+                                  <span>
+                                    <span className="text-slate-400">WiSe: </span>
+                                    {p.deadline_wise}
+                                    {(() => { const u = deadlineUrgency(p.deadline_wise); return u ? <span className={`ml-1 ${u.cls}`}>({u.text})</span> : null; })()}
+                                  </span>
+                                )}
+                                {p.deadline_sose   && (
+                                  <span>
+                                    <span className="text-slate-400">SoSe: </span>
+                                    {p.deadline_sose}
+                                    {(() => { const u = deadlineUrgency(p.deadline_sose); return u ? <span className={`ml-1 ${u.cls}`}>({u.text})</span> : null; })()}
+                                  </span>
+                                )}
+                                {p.german_requirement  && <span><span className="text-slate-400">Almanca:</span> {p.german_requirement}</span>}
+                                {p.english_requirement && <span><span className="text-slate-400">İngilizce:</span> {p.english_requirement}</span>}
+                                {p.nc_value            && <span><span className="text-slate-400">NC:</span> {p.nc_value}</span>}
+                                {p.min_gpa             && <span><span className="text-slate-400">Min. GPA (DE):</span> {p.min_gpa}</span>}
+                                {p.uni_assist_required && <span className="text-amber-600 font-medium">uni-assist gerekli</span>}
+                                {p.conditional_admission && <span className="text-blue-600">Şartlı kabul mevcut</span>}
+                                {p.confidence < 0.6    && (
+                                  <span className="text-slate-400 text-xs">Güvenilirlik: {Math.round(p.confidence * 100)}%</span>
+                                )}
+                              </div>
+
+                              {/* Issues & passed checks */}
+                              {p.issues && p.issues.length > 0 && (
+                                <div className="space-y-0.5">
+                                  {p.issues.map((issue, j) => (
+                                    <p key={j} className="text-xs text-red-600 flex gap-1.5"><span className="shrink-0">✗</span>{issue}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {p.passed_checks && p.passed_checks.length > 0 && (
+                                <div className="space-y-0.5">
+                                  {p.passed_checks.map((check, j) => (
+                                    <p key={j} className="text-xs text-green-700 flex gap-1.5"><span className="shrink-0">✓</span>{check}</p>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Notes */}
+                              {p.notes && (
+                                <p className="text-xs text-slate-500 italic border-t border-slate-100 pt-2">
+                                  {p.notes.length > 250 ? p.notes.slice(0, 250) + "…" : p.notes}
+                                </p>
+                              )}
+
+                              {/* Aksiyon butonları: takip + motivasyon */}
+                              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                                {/* Takip durumu dropdown */}
+                                <div className="flex items-center gap-1.5">
+                                  <BookmarkCheck className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  <select
+                                    value={getTracking(p.university, p.program)?.status ?? ""}
+                                    onChange={(e) => updateTracking(p.university, p.program, e.target.value as TrackingStatus)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-xs rounded-md border border-slate-200 bg-white px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                  >
+                                    <option value="">— Durum Seç —</option>
+                                    {(Object.entries(TRACKING_CONFIG) as [TrackingStatus, typeof TRACKING_CONFIG[TrackingStatus]][]).map(([key, cfg]) => (
+                                      <option key={key} value={key}>{cfg.emoji} {cfg.label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                {/* Motivasyon mektubu butonu */}
+                                {(p.eligibility === "uygun" || p.eligibility === "sartli") && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setMotivModal({ university: p.university, program: p.program, language: p.language, city: p.city, url: p.url });
+                                      setMotivLetter("");
+                                      setMotivSavedAs(null);
+                                    }}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors"
+                                  >
+                                    <FileEdit className="w-3.5 h-3.5" />
+                                    Motivasyon Mektubu
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                            {p.confidence < 0.6 && (
-                              <span className="col-span-full text-xs text-slate-400">
-                                Veri güvenilirliği: {Math.round(p.confidence * 100)}%
-                              </span>
-                            )}
-                            {p.issues && p.issues.length > 0 && (
-                              <div className="mt-2 space-y-0.5 col-span-full">
-                                {p.issues.map((issue, j) => (
-                                  <p key={j} className="text-xs text-red-600">⚠ {issue}</p>
-                                ))}
-                              </div>
-                            )}
-                            {p.passed_checks && p.passed_checks.length > 0 && (
-                              <div className="mt-1 space-y-0.5 col-span-full">
-                                {p.passed_checks.map((check, j) => (
-                                  <p key={j} className="text-xs text-green-700">✓ {check}</p>
-                                ))}
-                              </div>
-                            )}
-                            {p.notes && (
-                              <p className="mt-1.5 col-span-full text-xs text-slate-500 italic border-t border-slate-100 pt-1.5">
-                                {p.notes.length > 200 ? p.notes.slice(0, 200) + "…" : p.notes}
-                              </p>
-                            )}
                           </td>
                         </tr>
                       )}
-                    </>
+                    </React.Fragment>
                   );
                 })}
               </tbody>

@@ -21,12 +21,42 @@ export async function GET(req: Request) {
 
   try {
     if (mode === "list") {
-      const limit  = parseInt(searchParams.get("limit")  ?? "100");
-      const offset = parseInt(searchParams.get("offset") ?? "0");
+      const limit   = parseInt(searchParams.get("limit")  ?? "5000");
+      const offset  = parseInt(searchParams.get("offset") ?? "0");
+      const lang    = searchParams.get("lang")   ?? "";
+      const degree  = searchParams.get("degree") ?? "";
+      const search  = searchParams.get("search") ?? "";
+
+      const clauses: string[] = [];
+      const params: (string | number)[] = [];
+
+      if (lang) {
+        const ll = lang.toLowerCase();
+        const isEn = ["ingilizce", "english", "englisch"].some(x => ll.includes(x));
+        const isDe = ["almanca", "german", "deutsch"].some(x => ll.includes(x));
+        if (isEn) {
+          clauses.push("(lower(language) LIKE '%ingilizce%' OR lower(language) LIKE '%english%' OR lower(language) LIKE '%englisch%')");
+        } else if (isDe) {
+          clauses.push("(lower(language) LIKE '%almanca%' OR lower(language) LIKE '%german%' OR lower(language) LIKE '%deutsch%')");
+        }
+      }
+
+      if (degree) {
+        clauses.push("lower(degree) LIKE ?");
+        params.push(`%${degree.toLowerCase()}%`);
+      }
+
+      if (search) {
+        clauses.push("(lower(university) LIKE ? OR lower(program) LIKE ? OR lower(city) LIKE ?)");
+        const s = `%${search.toLowerCase()}%`;
+        params.push(s, s, s);
+      }
+
+      const where  = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
       const rows   = db.prepare(
-        "SELECT * FROM programs ORDER BY university, program LIMIT ? OFFSET ?"
-      ).all(limit, offset) as Record<string, unknown>[];
-      const total  = (db.prepare("SELECT COUNT(*) as cnt FROM programs").get() as { cnt: number }).cnt;
+        `SELECT * FROM programs ${where} ORDER BY university, program LIMIT ? OFFSET ?`
+      ).all(...params, limit, offset) as Record<string, unknown>[];
+      const total  = (db.prepare(`SELECT COUNT(*) as cnt FROM programs ${where}`).get(...params) as { cnt: number }).cnt;
       return NextResponse.json({ rows, total });
     }
 

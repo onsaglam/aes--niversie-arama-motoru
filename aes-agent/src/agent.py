@@ -9,6 +9,7 @@ Kullanım:
   python src/agent.py --template
 """
 import os
+import re
 import sys
 import json
 import asyncio
@@ -31,11 +32,16 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent))
 
 from reader   import read_profile, create_template
-from searcher import search
+from searcher import search, search_mastersportal, search_forums
 from scraper  import fetch_page
 from parser   import extract_program_data, extract_from_pdf, evaluate_eligibility, ProgramDetail
 from reporter import generate_word_report, generate_excel_report
 from database import ProgramDatabase
+try:
+    from notifier import send_completion_email
+    NOTIFIER_OK = True
+except ImportError:
+    NOTIFIER_OK = False
 
 console     = Console()
 STUDENTS_DIR  = Path("ogrenciler")
@@ -99,7 +105,7 @@ class RateLimitTracker:
     """API servislerinin günlük kullanımını takip eder."""
 
     DAILY_LIMITS = {
-        "tavily":     33,    # 1000/ay ÷ 30 gün
+        "tavily":     80,    # 1000/ay — günde ~2-3 öğrenci çalıştırılırsa yeterli
         "serper":     83,    # 2500/ay ÷ 30 gün
         "scraperapi": 166,   # 5000/ay ÷ 30 gün
         "anthropic":  999,   # Pratik olarak sınırsız, maliyet için
@@ -148,6 +154,52 @@ _UNI_STOP_WORDS = frozenset({
     "technology", "technical", "hochschule", "universität", "fachhochschule",
     "von", "zu", "in", "für", "mit",
 })
+
+
+def _parse_daad_deadline(raw: str) -> tuple:
+    """
+    DAAD applicationDeadline HTML/text'inden WiSe ve SoSe son başvuru tarihlerini çıkar.
+    Döndürür: (deadline_wise, deadline_sose) — her biri str veya None
+    """
+    if not raw:
+        return None, None
+    text = re.sub(r"<[^>]+>", " ", raw)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text or any(x in text.lower() for x in ("open admission", "rolling admission", "no deadline")):
+        return None, None
+
+    wise_date = None
+    sose_date = None
+
+    # WiSe: "Winter semester: 15 July", "Wintersemester: 1. November"
+    for pat in [
+        r'winter[^:,;)]*[:\s]+(\d{1,2}\.?\s+[A-Za-z\xe4\xfc\xf6\xc4\xdc\xd6\xdf]+(?:\s+\d{4})?)',
+        r'(\d{1,2}\.?\s+[A-Za-z\xe4\xfc\xf6\xc4\xdc\xd6\xdf]+(?:\s+\d{4})?)\s*[\(]winter',
+        r'ws\s*\d{0,4}[:\s/]+(\d{1,2}\.?\s+[A-Za-z]+(?:\s+\d{4})?)',
+    ]:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            wise_date = m.group(1).strip()
+            break
+
+    # SoSe: "Summer semester: 15 January", "Sommersemester: 15. April"
+    for pat in [
+        r'summer[^:,;)]*[:\s]+(\d{1,2}\.?\s+[A-Za-z\xe4\xfc\xf6\xc4\xdc\xd6\xdf]+(?:\s+\d{4})?)',
+        r'(\d{1,2}\.?\s+[A-Za-z\xe4\xfc\xf6\xc4\xdc\xd6\xdf]+(?:\s+\d{4})?)\s*[\(]summer',
+        r'somm[a-z]*[:\s]+(\d{1,2}\.?\s+[A-Za-z]+(?:\s+\d{4})?)',
+    ]:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            sose_date = m.group(1).strip()
+            break
+
+    # WiSe/SoSe ayrımı yapılamadıysa tek tarihi WiSe'e ata
+    if not wise_date and not sose_date:
+        m = re.search(r'(\d{1,2}\.?\s+[A-Za-z]+(?:\s+\d{4})?)', text, re.IGNORECASE)
+        if m:
+            wise_date = m.group(1).strip()
+
+    return wise_date, sose_date
 
 
 def _uni_keywords(university: str) -> list[str]:
@@ -206,7 +258,8 @@ _PRIVATE_UNIVERSITIES: frozenset[str] = frozenset({
     # Özel Fachhochschule'ler
     "international school of management", "university of europe",
     "europe university of applied sciences", "eu business",
-    "new european college", "bwl hochschule", "pfh private",
+    "new european college", "bwl hochschule", "pfh private", "pfh göttingen", "pfh stade",
+    "pfh.de", "pfh ",  # PFH Private Hochschule Göttingen
     "nordakademie", "ba sachsen", "berufsakademie sachsen",
     "hfwu nürtingen",  # yarı-özel
 })
@@ -275,6 +328,21 @@ _DOMAIN_TO_UNI: dict[str, str] = {
     "uni-trier.de":         "Universität Trier",
 }
 
+# Direkt program araması için hedef üniversiteler — devlet üniversiteleri
+_TARGET_UNIVERSITIES: list[str] = [
+    "TU München", "TU Berlin", "RWTH Aachen", "TU Dresden", "KIT Karlsruhe",
+    "TU Darmstadt", "Universität Stuttgart", "Leibniz Universität Hannover",
+    "TU Braunschweig", "LMU München", "Universität Hamburg", "Universität Bremen",
+    "Hochschule Bremen", "Goethe-Universität Frankfurt", "Universität Köln",
+    "Universität Bonn", "Universität Münster", "FAU Erlangen-Nürnberg",
+    "Universität Mannheim", "Ruhr-Universität Bochum", "TU Dortmund",
+    "FU Berlin", "HU Berlin", "Universität Heidelberg", "Universität Freiburg",
+    "Universität Göttingen", "Universität Leipzig", "Universität Tübingen",
+    "Universität Würzburg", "JGU Mainz", "Universität des Saarlandes",
+    "Universität Duisburg-Essen", "Universität Paderborn", "Universität Bielefeld",
+    "Universität Kassel", "CAU Kiel", "Universität Ulm", "Universität Augsburg",
+]
+
 
 def _domain_to_university(url: str) -> str:
     """URL'den üniversite adını çıkar — önce lookup tablosuna bak, sonra heuristik uygula."""
@@ -291,6 +359,131 @@ def _domain_to_university(url: str) -> str:
     name = domain.replace(".de", "").replace(".edu", "")
     name = name.replace("uni-", "Uni ").replace("tu-", "TU ").replace("fh-", "FH ").replace("hs-", "HS ")
     return name.title()
+
+
+# ─── Alan Adı Eşanlamlıları (Türkçe + İngilizce + Almanca) ──────────────────
+# Her key hem İngilizce hem Türkçe girilmiş alanları karşılar.
+# Değerler: [Almanca, İngilizce, alternatif] sırasıyla — DAAD API'si ve DB aramasında kullanılır.
+
+FIELD_SYNONYMS: dict[str, list[str]] = {
+    # Mühendislik — İngilizce key
+    "industrial engineering":       ["Wirtschaftsingenieurwesen", "Industrial Engineering", "Industrial Management"],
+    "computer science":             ["Informatik", "Computer Science", "Software Engineering"],
+    "mechanical engineering":       ["Maschinenbau", "Mechanical Engineering", "Maschinentechnik"],
+    "electrical engineering":       ["Elektrotechnik", "Electrical Engineering", "Informationstechnik"],
+    "civil engineering":            ["Bauingenieurwesen", "Civil Engineering", "Bauingenieur"],
+    "business administration":      ["Betriebswirtschaftslehre", "Business Administration", "BWL"],
+    "data science":                 ["Data Science", "Datenwissenschaften", "Data Analytics"],
+    "artificial intelligence":      ["Artificial Intelligence", "Machine Learning", "Künstliche Intelligenz"],
+    "architecture":                 ["Architektur", "Architecture"],
+    "economics":                    ["Volkswirtschaftslehre", "Economics", "VWL"],
+    "chemical engineering":         ["Chemieingenieurwesen", "Chemical Engineering", "Verfahrenstechnik"],
+    "environmental engineering":    ["Umweltingenieurwesen", "Environmental Engineering", "Umwelttechnik"],
+    "aerospace engineering":        ["Luft- und Raumfahrttechnik", "Aerospace Engineering", "Luftfahrttechnik"],
+    "biomedical engineering":       ["Biomedizintechnik", "Biomedical Engineering", "Medizintechnik"],
+    "materials science":            ["Materialwissenschaften", "Materials Science", "Werkstoffwissenschaft"],
+    "renewable energy":             ["Erneuerbare Energien", "Renewable Energy", "Energietechnik"],
+    "information systems":          ["Wirtschaftsinformatik", "Information Systems", "Informationssysteme"],
+    "finance":                      ["Finanzwirtschaft", "Finance", "Finanzmanagement"],
+    "supply chain management":      ["Supply Chain Management", "Logistik", "Logistics Management"],
+    "mechatronics":                 ["Mechatronik", "Mechatronics"],
+    "urban planning":               ["Stadtplanung", "Urban Planning", "Raumplanung"],
+    "mathematics":                  ["Mathematik", "Mathematics", "Angewandte Mathematik"],
+    "physics":                      ["Physik", "Physics", "Technische Physik"],
+    # Mühendislik — Türkçe key
+    "endüstri mühendisliği":        ["Wirtschaftsingenieurwesen", "Industrial Engineering", "Industrial Management"],
+    "bilgisayar mühendisliği":      ["Informatik", "Computer Science", "Software Engineering"],
+    "yazılım mühendisliği":         ["Informatik", "Computer Science", "Software Engineering"],
+    "makine mühendisliği":          ["Maschinenbau", "Mechanical Engineering", "Maschinentechnik"],
+    "elektrik mühendisliği":        ["Elektrotechnik", "Electrical Engineering", "Informationstechnik"],
+    "elektrik elektronik mühendisliği": ["Elektrotechnik", "Electrical Engineering", "Informationstechnik"],
+    "elektronik mühendisliği":      ["Elektrotechnik", "Electrical Engineering"],
+    "inşaat mühendisliği":          ["Bauingenieurwesen", "Civil Engineering"],
+    "işletme":                      ["Betriebswirtschaftslehre", "Business Administration", "BWL"],
+    "işletme yönetimi":             ["Betriebswirtschaftslehre", "Business Administration", "BWL"],
+    "veri bilimi":                  ["Data Science", "Datenwissenschaften", "Data Analytics"],
+    "yapay zeka":                   ["Artificial Intelligence", "Machine Learning", "Künstliche Intelligenz"],
+    "mimarlık":                     ["Architektur", "Architecture"],
+    "ekonomi":                      ["Volkswirtschaftslehre", "Economics", "VWL"],
+    "kimya mühendisliği":           ["Chemieingenieurwesen", "Chemical Engineering", "Verfahrenstechnik"],
+    "çevre mühendisliği":           ["Umweltingenieurwesen", "Environmental Engineering"],
+    "uzay mühendisliği":            ["Luft- und Raumfahrttechnik", "Aerospace Engineering"],
+    "uçak mühendisliği":            ["Luft- und Raumfahrttechnik", "Aerospace Engineering"],
+    "biyomedikal mühendisliği":     ["Biomedizintechnik", "Biomedical Engineering"],
+    "malzeme bilimi":               ["Materialwissenschaften", "Materials Science"],
+    "yenilenebilir enerji":         ["Erneuerbare Energien", "Renewable Energy", "Energietechnik"],
+    "bilişim sistemleri":           ["Wirtschaftsinformatik", "Information Systems"],
+    "finans":                       ["Finanzwirtschaft", "Finance", "Finanzmanagement"],
+    "mekatronik":                   ["Mechatronik", "Mechatronics"],
+    "kentsel tasarım":              ["Stadtplanung", "Urban Planning"],
+    "matematik":                    ["Mathematik", "Mathematics", "Angewandte Mathematik"],
+    "fizik":                        ["Physik", "Physics", "Technische Physik"],
+    "psikoloji":                    ["Psychologie", "Psychology"],
+    "hukuk":                        ["Rechtswissenschaften", "Law"],
+    "tıp":                          ["Medizin", "Medicine"],
+    "uluslararası ilişkiler":       ["Internationale Beziehungen", "International Relations"],
+    "iletişim":                     ["Kommunikationswissenschaften", "Media and Communication"],
+    "medya":                        ["Medienwissenschaften", "Media Studies"],
+    "tasarım":                      ["Design", "Gestaltung"],
+    "endüstriyel tasarım":          ["Industriedesign", "Industrial Design"],
+    "biyoteknoloji":                ["Biotechnologie", "Biotechnology"],
+    "gıda mühendisliği":            ["Lebensmitteltechnologie", "Food Technology"],
+    "tekstil mühendisliği":         ["Textiltechnologie", "Textile Technology"],
+    "petrol mühendisliği":          ["Erdöl- und Gasgewinnung", "Petroleum Engineering"],
+    "jeoloji mühendisliği":         ["Geologie", "Geology", "Geowissenschaften"],
+    "çevre tasarımı":               ["Umweltingenieurwesen", "Environmental Engineering"],
+    "muhasebe":                     ["Rechnungswesen", "Accounting", "BWL"],
+    "pazarlama":                    ["Marketing", "Betriebswirtschaftslehre"],
+    "lojistik":                     ["Logistik", "Supply Chain Management"],
+    "proje yönetimi":               ["Projektmanagement", "Project Management"],
+    "sosyoloji":                    ["Soziologie", "Sociology"],
+    "felsefe":                      ["Philosophie", "Philosophy"],
+    "tarih":                        ["Geschichte", "History"],
+    "eğitim":                       ["Erziehungswissenschaften", "Education"],
+    "enerji mühendisliği":          ["Energietechnik", "Energy Engineering", "Erneuerbare Energien"],
+    "güç sistemleri":               ["Energietechnik", "Power Engineering", "Elektrotechnik"],
+    "kontrol mühendisliği":         ["Regelungstechnik", "Control Engineering"],
+    "network mühendisliği":         ["Netzwerktechnik", "Network Engineering", "Informatik"],
+    "siber güvenlik":               ["IT-Sicherheit", "Cybersecurity", "Informatik"],
+}
+
+
+def get_field_query_variants(field: str) -> list[str]:
+    """
+    Verilen alan için DAAD API'ye gönderilecek arama sorguları üret.
+    Türkçe, İngilizce ve Almanca alan adlarını destekler.
+    """
+    field_lower = field.lower().strip()
+    # Tam eşleşme
+    for key, variants in FIELD_SYNONYMS.items():
+        if key == field_lower or any(v.lower() == field_lower for v in variants):
+            return variants
+    # Kısmi eşleşme (anahtar kelime içeriyorsa)
+    for key, variants in FIELD_SYNONYMS.items():
+        if key in field_lower or any(v.lower() in field_lower for v in variants):
+            return variants
+    # Bilinmeyen alan → orijinali kullan
+    return [field]
+
+
+def get_field_db_keywords(field: str) -> list[str]:
+    """
+    DB araması için geniş keyword listesi üret.
+    Türkçe girişi İngilizce/Almanca eşanlamlılarıyla genişletir.
+    """
+    variants = get_field_query_variants(field)
+    keywords = set()
+    # Orijinal alandan kelimeler
+    for w in field.split():
+        if len(w) >= 4:
+            keywords.add(w.lower())
+    # Eşanlamlı varyantlardan kelimeler
+    for variant in variants:
+        for w in variant.split():
+            clean = w.strip(".-,")
+            if len(clean) >= 4:
+                keywords.add(clean.lower())
+    return list(keywords)[:10]  # En fazla 10 keyword
 
 
 # ─── DAAD API Araması ─────────────────────────────────────────────────────────
@@ -338,21 +531,24 @@ async def search_programs_daad(profile) -> list[ProgramDetail]:
 
             deadline_raw  = item.get("applicationDeadline") or ""
             deadline_text = _re.sub(r"<[^>]+>", " ", deadline_raw).strip()[:200]
+            _dwise, _dsose = _parse_daad_deadline(deadline_raw)
 
             link = item.get("link", "")
             if link and not link.startswith("http"):
                 link = base_url + link
 
             prog = ProgramDetail(
-                university = uni_name,
-                city       = item.get("city", ""),
-                program    = item.get("courseName", ""),
-                degree     = item.get("preparationForDegree", profile.degree_type),
-                language   = ", ".join(langs),
-                url        = link,
-                notes      = deadline_text,
-                sources    = ["daad_api"],
-                confidence = 0.7,
+                university     = uni_name,
+                city           = item.get("city", ""),
+                program        = item.get("courseName", ""),
+                degree         = item.get("preparationForDegree", profile.degree_type),
+                language       = ", ".join(langs),
+                url            = link,
+                deadline_wise  = _dwise,
+                deadline_sose  = _dsose,
+                notes          = deadline_text,
+                sources        = ["daad_api"],
+                confidence     = 0.7,
             )
             if prog.university:
                 progs.append(prog)
@@ -370,31 +566,52 @@ async def search_programs_daad(profile) -> list[ProgramDetail]:
             resp.raise_for_status()
             return resp.json().get("courses", [])
 
+    # Alan adı → DAAD sorgu varyasyonları: modül seviyesindeki FIELD_SYNONYMS kullanılır
+
     console.print("   🔍 DAAD API taranıyor...", style="dim")
     results: list[ProgramDetail] = []
+    existing_keys: set[tuple] = set()
 
-    try:
-        # — Deneme 1: Hem string hem numeric derece filtresi ile ara —
-        deg_str = _DEGREE_STRING.get(profile.degree_type, "Master")
-        deg_num = _DEGREE_NUMERIC.get(profile.degree_type, "2")
-        courses = await _daad_query({
-            "preparationForDegree": deg_str,
-            "degree": deg_num,
-        })
-        results = _parse_courses(courses, apply_degree_filter=False)
-
-        # — Deneme 2: Filtresiz geniş arama (yedek) —
-        if len(results) < 4:
-            logging.info(f"DAAD derece filtresi az sonuç ({len(results)}), filtresiz deneniyor...")
-            courses_broad = await _daad_query({})
-            broad_results = _parse_courses(courses_broad, apply_degree_filter=True)
-            # Mevcut sonuçlarla birleştir (duplikat olmadan)
-            existing_keys = {(p.university.lower(), p.program.lower()[:40]) for p in results}
-            for p in broad_results:
+    async def _collect(params: dict, apply_filter: bool = False) -> None:
+        """DAAD'dan çek ve results listesine duplikatsız ekle."""
+        nonlocal results, existing_keys
+        try:
+            courses = await _daad_query(params)
+            for p in _parse_courses(courses, apply_degree_filter=apply_filter):
                 k = (p.university.lower(), p.program.lower()[:40])
                 if k not in existing_keys:
                     results.append(p)
                     existing_keys.add(k)
+        except Exception as e:
+            logging.warning(f"DAAD sorgu hatası ({params.get('q', '?')}): {e}")
+
+    try:
+        deg_str = _DEGREE_STRING.get(profile.degree_type, "Master")
+        query_variants = get_field_query_variants(profile.desired_field)
+
+        # — Deneme 1: Tüm sorgu varyasyonları paralel olarak çalıştır —
+        await asyncio.gather(*[
+            _collect({"q": q, "preparationForDegree": deg_str})
+            for q in query_variants[:3]
+        ])
+
+        # — Deneme 2: Yeterli sonuç yoksa filtresiz geniş arama —
+        if len(results) < 4:
+            logging.info(f"DAAD az sonuç ({len(results)}), filtresiz deneniyor...")
+            await asyncio.gather(*[
+                _collect({"q": q}, apply_filter=True)
+                for q in query_variants[:2]
+            ])
+
+        # — Deneme 3: Yeterli sonuç hâlâ yoksa numeric degree param ile dene —
+        if len(results) < 3:
+            deg_num = _DEGREE_NUMERIC.get(profile.degree_type, "")
+            if deg_num:
+                logging.info(f"DAAD az sonuç ({len(results)}), numeric degree ({deg_num}) deneniyor...")
+                await asyncio.gather(*[
+                    _collect({"q": q, "degree": deg_num})
+                    for q in query_variants[:2]
+                ])
 
         console.print(f"   ✅ DAAD'dan {len(results)} program bulundu", style="green")
 
@@ -443,6 +660,111 @@ async def search_programs_hochschulstart(profile) -> list[ProgramDetail]:
     return results
 
 
+async def search_programs_mastersportal(profile) -> list[ProgramDetail]:
+    """MastersPortal.eu'dan program ara — DAAD'ın kaçırdığı programları yakalar."""
+    if not rate_tracker.can_use("tavily"):
+        return []
+
+    console.print("   🎓 MastersPortal.eu taranıyor...", style="dim")
+    results: list[ProgramDetail] = []
+    seen_keys: set[tuple] = set()
+
+    portal = "mastersportal.eu" if profile.degree_type == "Master" else "bachelorsportal.eu"
+    eng_variants = get_field_query_variants(profile.desired_field)
+    eng_field = eng_variants[1] if len(eng_variants) > 1 else eng_variants[0]
+    queries = [
+        f'site:{portal} "{eng_field}" Germany admission requirements',
+        f'site:{portal} {eng_field} Deutschland university deadline',
+    ]
+
+    for query in queries:
+        if not rate_tracker.can_use("tavily"):
+            break
+        try:
+            hits = search(query, max_results=10)
+            rate_tracker.record("tavily")
+            for hit in hits:
+                url = hit.get("url", "")
+                if portal not in url:
+                    continue
+                title = hit.get("title", "")
+                content = hit.get("content", "")
+
+                # MastersPortal başlığı: "Program Name | University | MastersPortal.eu"
+                uni_name = ""
+                prog_name = title
+                if "|" in title:
+                    parts = [p.strip() for p in title.split("|")]
+                    prog_name = parts[0] if parts else title
+                    # İkinci parçadan portal adını çıkar
+                    for part in parts[1:]:
+                        if "portal" not in part.lower() and len(part) > 3:
+                            uni_name = part
+                            break
+
+                if not uni_name:
+                    uni_name = _domain_to_university(url)
+
+                if _is_private_university(uni_name):
+                    continue
+
+                k = (uni_name.lower()[:30], prog_name.lower()[:40])
+                if k in seen_keys or not uni_name:
+                    continue
+                seen_keys.add(k)
+
+                prog = ProgramDetail(
+                    university = uni_name,
+                    program    = prog_name,
+                    url        = url,
+                    notes      = content[:200],
+                    sources    = ["mastersportal"],
+                    confidence = 0.5,
+                )
+                results.append(prog)
+        except Exception as e:
+            logging.warning(f"MastersPortal arama hatası: {e}")
+
+    console.print(f"   ✅ MastersPortal'dan {len(results)} program bulundu", style="green")
+    return results
+
+
+async def search_programs_known_universities(profile) -> list[ProgramDetail]:
+    """
+    Bilinen Alman üniversitelerinde istenen alanı doğrudan ara.
+    DAAD ve MastersPortal'ın kaçırdığı programları bulur.
+    """
+    budget = min(rate_tracker.remaining("tavily"), 12)
+    if budget < 3:
+        return []
+
+    console.print(f"   🏛️  Üniversiteler direkt taranıyor ({min(budget, len(_TARGET_UNIVERSITIES))} üni)...", style="dim")
+    results: list[ProgramDetail] = []
+    found = 0
+
+    for uni_name in _TARGET_UNIVERSITIES[:budget]:
+        if not rate_tracker.can_use("tavily"):
+            break
+        try:
+            url = await find_program_page(uni_name, profile.desired_field)
+            if url:
+                prog = ProgramDetail(
+                    university = uni_name,
+                    program    = profile.desired_field,  # enrich'te gerçek adı bulunacak
+                    url        = url,
+                    degree     = profile.degree_type,
+                    sources    = ["direct_uni_search"],
+                    confidence = 0.4,
+                )
+                results.append(prog)
+                found += 1
+        except Exception as e:
+            logging.debug(f"Direkt üniversite arama hatası ({uni_name}): {e}")
+
+    console.print(f"   ✅ {found} üniversitede doğrudan program bulundu", style="green")
+    return results
+
+
 # ─── Web Araması ile Program Bulma ───────────────────────────────────────────
 
 async def search_programs_web(profile) -> list[ProgramDetail]:
@@ -450,9 +772,17 @@ async def search_programs_web(profile) -> list[ProgramDetail]:
     results = []
     console.print("   🌐 Web araması yapılıyor...", style="dim")
 
+    uni_type = getattr(profile, "university_type", "").lower()
+    uni_type_query = " staatlich" if uni_type in ("volluniversität", "devlet", "staatlich", "public") else ""
+
+    # İngilizce eşanlamlı ile de ara (Türkçe alan adı girilmişse)
+    eng_variants = get_field_query_variants(profile.desired_field)
+    eng_field = eng_variants[1] if len(eng_variants) > 1 else eng_variants[0]
+    deg = profile.degree_type or "Master"
     queries = [
-        f'"{profile.desired_field}" {profile.degree_type} Germany university admission requirements',
-        f'{profile.desired_field} Studium Deutschland Bewerbung Sprachkenntnisse {profile.degree_type}',
+        f'"{eng_field}" {deg} Germany university admission requirements English{uni_type_query}',
+        f'{eng_field} {deg}studium Deutschland Bewerbung Zulassungsvoraussetzungen',
+        f'site:.de "{eng_field}" {deg} Bewerbungsfristen Sprachkenntnisse',
     ]
     if profile.preferred_cities and "fark etmez" not in [c.lower() for c in profile.preferred_cities]:
         city = profile.preferred_cities[0]
@@ -738,6 +1068,17 @@ async def enrich_program(prog: ProgramDetail, profile) -> ProgramDetail:
         prog.eligibility_reason = "Üniversite adı bilinmiyor — kaynak sadece referans"
         return prog
 
+    # Özel üniversite filtresi — öğrenci devlet üniversitesi istiyorsa
+    uni_type_pref = getattr(profile, "university_type", "")
+    if uni_type_pref and uni_type_pref.lower() in ("volluniversität", "devlet", "staatlich", "public"):
+        if _is_private_university(prog.university):
+            prog.eligibility        = "uygun_degil"
+            prog.eligibility_reason = (
+                f"{prog.university} özel bir üniversitedir (private) — "
+                f"öğrenci devlet üniversitesi (Volluniversität/staatlich) istiyor"
+            )
+            return prog
+
     # ── DB cache kontrolü ─────────────────────────────────────────────
     if prog.url:
         cached = db.get_by_url(prog.url)
@@ -804,6 +1145,54 @@ async def enrich_program(prog: ProgramDetail, profile) -> ProgramDetail:
                 if pdf_data:
                     _merge_pdf_data(prog, pdf_data)
 
+    # ── Adım 4: Forum zenginleştirmesi — dil şartları hâlâ eksikse ─────
+    if (rate_tracker.can_use("tavily")
+            and not prog.german_requirement
+            and not prog.english_requirement
+            and prog.university
+            and prog.program):
+        try:
+            forum_hits = search_forums(prog.university, prog.program)
+            rate_tracker.record("tavily")
+            if forum_hits:
+                forum_text = " ".join(h.get("content", "") for h in forum_hits[:3])
+                # Dil şartı kalıpları
+                if not prog.german_requirement:
+                    m = re.search(
+                        r'(TestDaF\s*\d+|DSH[-\s]?\d|Goethe[-\s]?C\d|telc\s+C\d)',
+                        forum_text, re.IGNORECASE,
+                    )
+                    if m:
+                        prog.german_requirement = m.group(1).strip()
+                        prog.sources.append("forum_data")
+                if not prog.english_requirement:
+                    m = re.search(
+                        r'(IELTS\s*[\d.]+|TOEFL\s*iBT\s*\d+|TOEFL\s*\d+)',
+                        forum_text, re.IGNORECASE,
+                    )
+                    if m:
+                        prog.english_requirement = m.group(1).strip()
+                        if "forum_data" not in prog.sources:
+                            prog.sources.append("forum_data")
+        except Exception as e:
+            logging.debug(f"Forum zenginleştirme hatası ({prog.university}): {e}")
+
+    # Program adı hâlâ kötüyse (PDF başlığı vb.) "veri_yok" işaretle, değerlendirme yapma
+    if _is_bad_program_name(prog.program):
+        prog.eligibility        = "veri_yok"
+        prog.eligibility_reason = "Program adı geçersiz/belirsiz — sayfa scrapin'den gerçek program adı çıkarılamadı"
+        return prog
+
+    # Alakasızlık filtresi — istenilen alandan çok uzaksa değerlendirme yapma
+    relevance = _program_relevance_score(prog.program, profile.desired_field)
+    if relevance < 0.28:
+        prog.eligibility        = "uygun_degil"
+        prog.eligibility_reason = (
+            f"Program alanı uyuşmuyor: '{prog.program}' — "
+            f"öğrenci '{profile.desired_field}' alanı arıyor"
+        )
+        return prog
+
     result = evaluate_eligibility(profile, prog)
 
     # Veri çıkarma tamamen başarısız olduysa — "uygun" gösterme, "veri_yok" işaretle
@@ -822,6 +1211,95 @@ async def enrich_program(prog: ProgramDetail, profile) -> ProgramDetail:
 
 
 # ─── Tekrarsız Birleştirme ───────────────────────────────────────────────────
+
+def _is_bad_program_name(name: str) -> bool:
+    """
+    Program adı gerçek bir program değil, sayfa başlığı/dosya adı gibi görünüyorsa True.
+    Örn: 'Hinweise zur Bewerbung für...' veya 'Bewerbung - Studium Industrial'
+    """
+    if not name:
+        return True
+    bad_prefixes = [
+        "hinweise zur", "hinweise für", "bewerbung -", "bewerbung zum",
+        "bewerbung für", "merkblatt", "informationen zur", "zulassungsverfahren",
+        "bachelor studiengang", "[pdf]", "stellenausschreibung",
+    ]
+    name_l = name.lower().strip()
+    return any(name_l.startswith(bp) for bp in bad_prefixes)
+
+
+def _program_relevance_score(program_name: str, desired_field: str) -> float:
+    """
+    Program adının istenen alana ne kadar uygun olduğunu 0.0-1.0 arasında skora çevirir.
+    Tamamen alakasız programlar düşük skor alır.
+    """
+    if not program_name or not desired_field:
+        return 0.5  # belirsiz — geçir
+
+    prog_l  = program_name.lower()
+    field_l = desired_field.lower()
+
+    # Anahtar kelimeler
+    field_words = [w for w in field_l.split() if len(w) >= 4]
+    if not field_words:
+        return 0.5
+
+    match_count = sum(1 for w in field_words if w in prog_l)
+    score = match_count / len(field_words)
+
+    # Bazı yaygın engineering alt alanları arasında ilişki tanı (Türkçe + Almanca + İngilizce)
+    related_groups = [
+        {"industrial", "wirtschaftsingenieur", "production", "manufacturing",
+         "logistics", "logistik", "operations", "management", "supply chain",
+         "endüstri", "endüstriyel", "üretim"},
+        {"mechanical", "maschinenbau", "machine", "automotive", "fahrzeug",
+         "mechatronics", "mechatronik", "maschinentechnik", "makine"},
+        {"electrical", "electronic", "elektrotechnik", "elektro", "power",
+         "informationstechnik", "nachrichtentechnik", "elektrik", "elektronik"},
+        {"computer", "software", "informatik", "data", "ai", "artificial",
+         "intelligence", "künstliche", "machine learning", "datenwissen",
+         "bilgisayar", "yazılım", "bilişim"},
+        {"civil", "structural", "bauingenieur", "bauingenieurwesen", "construction",
+         "inşaat"},
+        {"chemical", "chemie", "chemieingenieur", "verfahrenstechnik", "process", "biochem",
+         "kimya"},
+        {"aerospace", "aviation", "luft", "raumfahrt", "luftfahrt",
+         "uzay", "uçak", "havacılık"},
+        {"environmental", "sustainability", "green", "energy", "umwelt",
+         "erneuerbare", "renewable", "energietechnik", "çevre", "enerji"},
+        {"biomedical", "medizintechnik", "biomedizin", "medical", "healthcare",
+         "biyomedikal", "tıbbi"},
+        {"materials", "werkstoff", "materialwissen", "werkstoffe", "malzeme"},
+        {"economics", "volkswirtschaft", "vwl", "finance", "finanzwirtschaft",
+         "ekonomi", "iktisat", "finans"},
+        {"business", "betriebswirtschaft", "bwl", "mba", "management",
+         "işletme", "yönetim"},
+        {"urban", "stadtplanung", "raumplanung", "spatial", "kentsel", "şehir"},
+        {"mathematics", "mathematik", "angewandte", "statistics", "statistik",
+         "matematik", "istatistik"},
+        {"physics", "physik", "technische physik", "fizik"},
+        {"architecture", "architektur", "mimarlık", "mimar"},
+        {"biotechnology", "biotechnologie", "biyoteknoloji"},
+        {"psychology", "psychologie", "psikoloji"},
+        {"robotics", "automation", "automatisierung", "robotik", "steuerungstechnik",
+         "control", "regelungstechnik", "mechatronik", "mechatronics", "robotik",
+         "otomasyon", "robotik"},
+        {"information", "informatics", "informatik", "digital", "cyber",
+         "it-security", "cybersecurity", "netzwerk", "it-sicherheit"},
+        {"media", "communication", "medien", "kommunikation", "journalism",
+         "medya", "iletişim", "gazetecilik"},
+        {"health", "healthcare", "gesundheit", "medical", "nursing", "medizin",
+         "sağlık", "hemşirelik"},
+        {"law", "rechtswissenschaft", "legal", "recht", "hukuk"},
+    ]
+    for group in related_groups:
+        field_in_group = any(w in field_l for w in group)
+        prog_in_group  = any(w in prog_l  for w in group)
+        if field_in_group and prog_in_group:
+            score = max(score, 0.6)  # aynı grup → minimum 0.6
+
+    return score
+
 
 def merge_programs(lists: list[list]) -> list[ProgramDetail]:
     seen: set[tuple] = set()
@@ -907,26 +1385,32 @@ async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
     # ── 3. Ek kaynaklar araması ────────────────────────────────────────
     web_programs         = []
     hochschulstart_progs = []
+    mastersportal_progs  = []
+    direct_uni_progs     = []
     if not quick:
-        console.print("\n[3/5] 🌐 Web & hochschulstart araması yapılıyor...")
-        web_programs, hochschulstart_progs = await asyncio.gather(
+        console.print("\n[3/5] 🌐 MastersPortal + Web + Hochschulstart araması yapılıyor...")
+        web_programs, hochschulstart_progs, mastersportal_progs = await asyncio.gather(
             search_programs_web(profile),
             search_programs_hochschulstart(profile),
+            search_programs_mastersportal(profile),
         )
+        # Direkt üniversite araması — kalan Tavily kotası varsa
+        direct_uni_progs = await search_programs_known_universities(profile)
     else:
         console.print("\n[3/5] ⏩ Hızlı mod — ek web araması atlandı")
 
-    all_programs = merge_programs([daad_programs, web_programs, hochschulstart_progs])
+    all_programs = merge_programs([daad_programs, mastersportal_progs, direct_uni_progs, web_programs, hochschulstart_progs])
 
     # ── DB önbellekten ek program yükle ───────────────────────────────
     # Daha önce başka öğrenci için taranmış programları içe al —
     # bunlar scraping olmadan hazır veriye sahip.
     try:
-        field_keywords = [kw for kw in profile.desired_field.split() if len(kw) >= 4]
+        # Türkçe alan adı girilmişse İngilizce/Almanca eşanlamlılarıyla DB'yi ara
+        field_keywords = get_field_db_keywords(profile.desired_field)
         db_programs = db.search(
-            language     = profile.program_language if profile.program_language != "Fark etmez" else None,
+            language     = profile.program_language if profile.program_language not in ("Fark etmez", "", None) else None,
             degree       = profile.degree_type,
-            field_keywords = field_keywords[:5],  # ilk 5 anahtar kelime yeterli
+            field_keywords = field_keywords[:10],
         )
         new_from_db = 0
         existing_keys = {(p.university.lower().strip(), p.program.lower().strip()[:40]) for p in all_programs}
@@ -968,18 +1452,28 @@ async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
         console.print(f"\n      ⚡ DB önbelleğinden {len(fast_enriched)} program hızla değerlendirildi", style="dim")
 
     # Scraping gerektiren programlar
-    limit      = 20 if not quick else 10
+    limit      = 30 if not quick else 12
     to_enrich  = need_scrape[:limit]
-    console.print(f"\n[4/5] 🕷️  {len(to_enrich)} program için detay alınıyor...")
+    console.print(f"\n[4/5] 🕷️  {len(to_enrich)} program için detay alınıyor (paralel)...")
+
+    # asyncio.Semaphore ile eş zamanlı maksimum 4 scraping — Anthropic rate limit koruması
+    _ENRICH_SEMAPHORE = asyncio.Semaphore(4)
+
+    async def _enrich_with_sem(p: ProgramDetail) -> ProgramDetail:
+        async with _ENRICH_SEMAPHORE:
+            return await enrich_program(p, profile)
 
     scraped = []
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
                   BarColumn(), console=console) as progress:
         task = progress.add_task("Taranıyor...", total=len(to_enrich))
-        for p in to_enrich:
-            result = await enrich_program(p, profile)
-            scraped.append(result)
+
+        async def _track(p: ProgramDetail) -> ProgramDetail:
+            result = await _enrich_with_sem(p)
             progress.advance(task)
+            return result
+
+        scraped = list(await asyncio.gather(*[_track(p) for p in to_enrich]))
 
     for p in need_scrape[len(to_enrich):]:
         p.eligibility        = "taranmadi"
@@ -1016,6 +1510,34 @@ async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
             "url":                  p.url,
             "notes":                p.notes or None,
         } for p in final_programs], f, ensure_ascii=False, indent=2)
+
+    # ── 6. Email bildirimi ─────────────────────────────────────────────
+    if NOTIFIER_OK:
+        try:
+            eligible    = [p for p in final_programs if p.eligibility == "uygun"]
+            conditional = [p for p in final_programs if p.eligibility == "sartli"]
+
+            # Özet metin (ilk 15 uygun+şartlı program)
+            summary_lines = [f"Öğrenci: {profile.name}",
+                             f"Alan: {profile.desired_field} ({profile.degree_type})",
+                             f"Toplam taranan: {len(final_programs)} program",
+                             f"Uygun: {len(eligible)}, Şartlı: {len(conditional)}", ""]
+            for p in (eligible + conditional)[:15]:
+                icon = "[UYGUN]" if p.eligibility == "uygun" else "[SARTLI]"
+                dl   = p.deadline_wise or p.deadline_sose or "—"
+                summary_lines.append(f"{icon} {p.university} — {p.program[:40]} (Deadline: {dl})")
+
+            report_files = list(folder.glob("sonuc_raporu_*.docx")) + list(folder.glob("universite_listesi_*.xlsx"))
+
+            send_completion_email(
+                student_name      = profile.name or student_folder,
+                programs_summary  = "\n".join(summary_lines),
+                report_files      = report_files,
+                eligible_count    = len(eligible),
+                conditional_count = len(conditional),
+            )
+        except Exception as e:
+            logging.warning(f"Email bildirimi gönderilemedi: {e}")
 
     # ── Özet ───────────────────────────────────────────────────────────
     print_summary(final_programs, profile)

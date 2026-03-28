@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import NavLinks from "./NavLinks";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -9,12 +10,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="tr" className="h-full">
+    <html lang="tr" className="h-full" suppressHydrationWarning>
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900 antialiased">
         {/* Üst şerit */}
         <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur">
           <div className="mx-auto max-w-7xl px-6 py-3 flex items-center gap-3">
-            <div className="flex items-center gap-2">
+            <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm"
                    style={{ background: "var(--aes-navy)" }}>
                 AES
@@ -25,13 +26,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </p>
                 <p className="text-xs text-slate-400 mt-0.5">Üniversite Araştırma Paneli</p>
               </div>
-            </div>
-            <nav className="ml-auto flex items-center gap-4">
-              <Link href="/programs" className="text-xs text-slate-500 hover:text-blue-600 transition-colors">
-                Veritabanı
-              </Link>
-              <span className="text-xs text-slate-300">|</span>
-              <span className="text-xs text-slate-400">Bremen, Germany</span>
+            </Link>
+            <nav className="ml-auto flex items-center gap-5">
+              <NavLinks />
+              <span className="text-xs text-slate-300 hidden sm:block">|</span>
+              <span className="text-xs text-slate-400 hidden sm:block">Bremen, Germany</span>
             </nav>
           </div>
         </header>
@@ -40,7 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         <footer className="border-t border-slate-200 bg-white">
           <div className="mx-auto max-w-7xl px-6 py-3 text-center text-xs text-slate-400">
-            AES — Almanya Eğitim Serüveni · aes-kompass.com · Bremen
+            AES — Almanya Eğitim Serüveni · info@almanyaegitimseruveni.com · Bremen
           </div>
         </footer>
       </body>

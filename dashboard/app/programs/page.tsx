@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
+
+const _PAGE_LOAD_TIME = Date.now();
 import Link from "next/link";
-import { Database, Clock, CheckCircle2, AlertTriangle, Trash2 } from "lucide-react";
+import { Database, CheckCircle2, AlertTriangle, Trash2, Download } from "lucide-react";
 
 interface Stats {
   total:        number;
@@ -35,27 +37,47 @@ interface Program {
 }
 
 export default function ProgramsPage() {
-  const [stats,       setStats]       = useState<Stats | null>(null);
-  const [programs,    setPrograms]    = useState<Program[]>([]);
-  const [search,      setSearch]      = useState("");
-  const [langFilter,  setLangFilter]  = useState("");
-  const [degFilter,   setDegFilter]   = useState("");
-  const [loading,     setLoading]     = useState(true);
-  const [cleaning,    setCleaning]    = useState(false);
+  const [stats,        setStats]        = useState<Stats | null>(null);
+  const [programs,     setPrograms]     = useState<Program[]>([]);
+  const [totalRows,    setTotalRows]    = useState(0);
+  const [search,       setSearch]       = useState("");
+  const [langFilter,   setLangFilter]   = useState("");
+  const [degFilter,    setDegFilter]    = useState("");
+  const [ncFreeOnly,   setNcFreeOnly]   = useState(false);
+  const [uniAssistFilter, setUniAssistFilter] = useState<"" | "required" | "not_required">("");
+  const [sortCol,      setSortCol]      = useState<"university" | "deadline_wise" | "deadline_sose" | "last_scraped">("last_scraped");
+  const [sortDir,      setSortDir]      = useState<"asc" | "desc">("desc");
+  const [loading,      setLoading]      = useState(true);
+  const [cleaning,     setCleaning]     = useState(false);
 
-  const loadData = () => {
+  const loadStats = () => {
+    fetch("/api/programs").then((r) => r.json()).then(setStats);
+  };
+
+  const loadPrograms = (lang = langFilter, deg = degFilter, q = search) => {
     setLoading(true);
-    Promise.all([
-      fetch("/api/programs").then((r) => r.json()),
-      fetch("/api/programs?mode=list&limit=500").then((r) => r.json()),
-    ]).then(([s, l]) => {
-      setStats(s);
+    const params = new URLSearchParams({ mode: "list", limit: "5000" });
+    if (lang)  params.set("lang",   lang);
+    if (deg)   params.set("degree", deg);
+    if (q)     params.set("search", q);
+    fetch(`/api/programs?${params}`).then((r) => r.json()).then((l) => {
       setPrograms(l.rows ?? []);
+      setTotalRows(l.total ?? 0);
       setLoading(false);
     });
   };
 
-  useEffect(loadData, []);
+  useEffect(() => {
+    loadStats();
+    loadPrograms("", "", "");
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleLangChange = (v: string) => { setLangFilter(v); loadPrograms(v, degFilter, search); };
+  const handleDegChange  = (v: string) => { setDegFilter(v);  loadPrograms(langFilter, v, search); };
+  const handleSearch     = (v: string) => {
+    setSearch(v);
+    if (v.length === 0 || v.length >= 2) loadPrograms(langFilter, degFilter, v);
+  };
 
   const handleCleanStale = async () => {
     if (!confirm("30 günden eski program kayıtları silinecek. Devam edilsin mi?")) return;
@@ -64,23 +86,45 @@ export default function ProgramsPage() {
     const data = await res.json();
     setCleaning(false);
     alert(`${data.deleted} eski kayıt silindi.`);
-    loadData();
+    loadStats();
+    loadPrograms();
   };
 
   const filtered = programs.filter((p) => {
-    if (langFilter && p.language !== langFilter) return false;
-    if (degFilter  && p.degree  !== degFilter)  return false;
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      p.university?.toLowerCase().includes(q) ||
-      p.program?.toLowerCase().includes(q) ||
-      p.city?.toLowerCase().includes(q)
-    );
+    if (ncFreeOnly && p.nc_value?.toLowerCase() !== "zulassungsfrei") return false;
+    if (uniAssistFilter === "required"     && !p.uni_assist)  return false;
+    if (uniAssistFilter === "not_required" && p.uni_assist)   return false;
+    return true;
+  }).sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    const av = a[sortCol] ?? "";
+    const bv = b[sortCol] ?? "";
+    return av < bv ? -dir : av > bv ? dir : 0;
   });
 
-  const languages = [...new Set(programs.map((p) => p.language).filter(Boolean))].sort();
-  const degrees   = [...new Set(programs.map((p) => p.degree).filter(Boolean))].sort();
+  const exportCsv = () => {
+    const headers = ["Üniversite", "Program", "Şehir", "Dil", "Derece", "Almanca Şartı", "İngilizce Şartı", "NC", "WiSe", "SoSe", "Min GPA", "uni-assist", "Güncelleme"];
+    const rows = filtered.map((p) => [
+      p.university, p.program, p.city, p.language, p.degree,
+      p.german_requirement ?? "", p.english_requirement ?? "",
+      p.nc_value ?? "", p.deadline_wise ?? "", p.deadline_sose ?? "",
+      p.min_gpa ?? "", p.uni_assist ? "Evet" : "Hayır", p.last_scraped,
+    ]);
+    const csv = [headers, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `aes-programlar-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const LANG_OPTIONS = [
+    { value: "İngilizce",  label: "İngilizce" },
+    { value: "Almanca",    label: "Almanca" },
+  ];
+  const degrees = [...new Set(programs.map((p) => p.degree).filter(Boolean))].sort();
 
   if (loading) return (
     <div className="text-center py-20 text-slate-400">
@@ -108,6 +152,16 @@ export default function ProgramsPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {filtered.length > 0 && (
+            <button
+              onClick={exportCsv}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                         border border-green-200 text-green-700 hover:bg-green-50 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              CSV İndir ({filtered.length})
+            </button>
+          )}
           {(stats?.stale ?? 0) > 0 && (
             <button
               onClick={handleCleanStale}
@@ -206,30 +260,65 @@ export default function ProgramsPage() {
               type="text"
               placeholder="Üniversite, program veya şehir ara..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => handleSearch(e.target.value)}
               className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            {languages.length > 0 && (
-              <select
-                value={langFilter}
-                onChange={(e) => setLangFilter(e.target.value)}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Tüm diller</option>
-                {languages.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select>
-            )}
+            <select
+              value={langFilter}
+              onChange={(e) => handleLangChange(e.target.value)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Tüm diller</option>
+              {LANG_OPTIONS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+            </select>
             {degrees.length > 0 && (
               <select
                 value={degFilter}
-                onChange={(e) => setDegFilter(e.target.value)}
+                onChange={(e) => handleDegChange(e.target.value)}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">Tüm dereceler</option>
                 {degrees.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             )}
-            <span className="text-xs text-slate-400 shrink-0">{filtered.length} sonuç</span>
+            <select
+              value={uniAssistFilter}
+              onChange={(e) => setUniAssistFilter(e.target.value as "" | "required" | "not_required")}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">uni-assist: hepsi</option>
+              <option value="required">uni-assist: gerekli</option>
+              <option value="not_required">uni-assist: gerekli değil</option>
+            </select>
+            <button
+              onClick={() => setNcFreeOnly((v) => !v)}
+              className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                ncFreeOnly
+                  ? "bg-green-100 border-green-300 text-green-700"
+                  : "border-slate-200 text-slate-500 hover:bg-slate-50"
+              }`}
+            >
+              NC&apos;siz
+            </button>
+            <select
+              value={`${sortCol}:${sortDir}`}
+              onChange={(e) => {
+                const [col, dir] = e.target.value.split(":") as [typeof sortCol, typeof sortDir];
+                setSortCol(col);
+                setSortDir(dir);
+              }}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="last_scraped:desc">En yeni</option>
+              <option value="last_scraped:asc">En eski</option>
+              <option value="university:asc">Üniversite A→Z</option>
+              <option value="university:desc">Üniversite Z→A</option>
+              <option value="deadline_wise:asc">WiSe erken</option>
+              <option value="deadline_sose:asc">SoSe erken</option>
+            </select>
+            <span className="text-xs text-slate-400 shrink-0">
+              {filtered.length} / {totalRows} sonuç
+            </span>
           </div>
 
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -248,7 +337,7 @@ export default function ProgramsPage() {
               <tbody className="divide-y divide-slate-100">
                 {filtered.slice(0, 200).map((p, i) => {
                   const daysAgo = Math.floor(
-                    (Date.now() - new Date(p.last_scraped).getTime()) / 86400000
+                    (_PAGE_LOAD_TIME - new Date(p.last_scraped).getTime()) / 86400000
                   );
                   const isFresh = daysAgo <= 30;
                   return (

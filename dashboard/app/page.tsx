@@ -2,7 +2,18 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Users, Search, CheckCircle, AlertCircle, XCircle, Clock, FolderOpen, Plus, X } from "lucide-react";
+import { Users, Search, CheckCircle, AlertCircle, XCircle, Clock, FolderOpen, Plus, X, Bell, ChevronRight, Play, RefreshCw } from "lucide-react";
+
+interface DeadlineItem {
+  studentName: string;
+  university: string;
+  program: string;
+  deadlineType: string;
+  deadlineRaw: string;
+  daysLeft: number;
+  eligibility: string;
+  url: string | null;
+}
 
 interface StudentSummary {
   name: string;
@@ -111,6 +122,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showNew, setShowNew] = useState(false);
+  const [deadlines, setDeadlines] = useState<DeadlineItem[]>([]);
+  const [runningAll, setRunningAll] = useState(false);
 
   const loadStudents = () => {
     fetch("/api/students")
@@ -120,6 +133,13 @@ export default function DashboardPage() {
   };
 
   useEffect(loadStudents, []);
+
+  useEffect(() => {
+    fetch("/api/deadlines")
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d)) setDeadlines(d); })
+      .catch(() => {});
+  }, []);
 
   // Çalışan öğrenci varsa 5 saniyede bir yenile
   useEffect(() => {
@@ -139,6 +159,33 @@ export default function DashboardPage() {
   const handleCreated = (folderName: string) => {
     setShowNew(false);
     router.push(`/students/${encodeURIComponent(folderName)}/edit`);
+  };
+
+  const handleRunAll = async () => {
+    setRunningAll(true);
+    try {
+      const res = await fetch("/api/students/run-all?mode=stale", { method: "POST" });
+      if (!res.body) { setRunningAll(false); return; }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const evt = JSON.parse(line.slice(5).trim());
+            if (evt.type === "done") loadStudents();
+          } catch { /* ignore */ }
+        }
+      }
+    } catch { /* ignore */ }
+    setRunningAll(false);
+    loadStudents();
   };
 
   return (
@@ -170,6 +217,42 @@ export default function DashboardPage() {
         ))}
       </div>
 
+      {/* Yaklaşan deadline uyarıları */}
+      {deadlines.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Bell className="w-4 h-4 text-amber-600 shrink-0" />
+            <h2 className="text-sm font-semibold text-amber-800">Yaklaşan Başvuru Son Tarihleri</h2>
+            <span className="ml-auto text-xs text-amber-600 font-medium">{deadlines.length} program</span>
+          </div>
+          <div className="space-y-2">
+            {deadlines.slice(0, 5).map((d, i) => (
+              <div key={i} className="flex items-center gap-3 bg-white rounded-lg px-3 py-2 border border-amber-100">
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                  d.daysLeft <= 7 ? "bg-red-100 text-red-700" :
+                  d.daysLeft <= 14 ? "bg-orange-100 text-orange-700" :
+                  "bg-amber-100 text-amber-700"
+                }`}>
+                  {d.daysLeft <= 0 ? "Bugün!" : `${d.daysLeft}g`}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium text-slate-700 truncate">
+                    {d.university} — {d.program}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {d.studentName.replace(/_/g, " ")} · {d.deadlineType} · {d.deadlineRaw}
+                  </p>
+                </div>
+                <Link href={`/students/${encodeURIComponent(d.studentName)}`}
+                  className="text-xs text-blue-600 hover:underline shrink-0 flex items-center gap-0.5">
+                  Görüntüle <ChevronRight className="w-3 h-3" />
+                </Link>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Arama + başlık + yeni öğrenci */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <h1 className="text-xl font-semibold text-slate-800">Öğrenci Listesi</h1>
@@ -185,6 +268,17 @@ export default function DashboardPage() {
                          focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
             />
           </div>
+          <button
+            onClick={handleRunAll}
+            disabled={runningAll}
+            title="7+ gündür güncellenmemiş öğrenciler için araştırmayı başlat"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 shrink-0"
+          >
+            {runningAll
+              ? <RefreshCw className="w-4 h-4 animate-spin" />
+              : <Play className="w-4 h-4" />}
+            <span className="hidden sm:inline">Toplu Çalıştır</span>
+          </button>
           <button
             onClick={() => setShowNew(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white shrink-0"

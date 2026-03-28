@@ -107,13 +107,15 @@ class ProgramDatabase:
 
         if language:
             ll = language.lower()
-            if any(x in ll for x in ("ingilizce", "english")):
+            if any(x in ll for x in ("ingilizce", "english", "englisch")):
                 clauses.append(
-                    "(lower(language) LIKE '%ingilizce%' OR lower(language) LIKE '%english%')"
+                    "(lower(language) LIKE '%ingilizce%' OR lower(language) LIKE '%english%'"
+                    " OR lower(language) LIKE '%englisch%')"
                 )
-            elif any(x in ll for x in ("almanca", "german")):
+            elif any(x in ll for x in ("almanca", "german", "deutsch")):
                 clauses.append(
-                    "(lower(language) LIKE '%almanca%' OR lower(language) LIKE '%german%')"
+                    "(lower(language) LIKE '%almanca%' OR lower(language) LIKE '%german%'"
+                    " OR lower(language) LIKE '%deutsch%')"
                 )
 
         if degree:
