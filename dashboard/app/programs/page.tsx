@@ -39,7 +39,6 @@ interface Program {
   url:                   string | null;
 }
 
-type AdmissionFilter = "" | "direct" | "conditional";
 type NcFilter        = "" | "free" | "restricted";
 type DeadlineFilter  = "" | "7" | "14" | "30" | "60";
 type UniAssistFilter = "" | "required" | "not_required";
@@ -188,10 +187,10 @@ export default function ProgramsPage() {
   const [langFilter,      setLangFilter]      = useState("");
   const [degFilter,       setDegFilter]       = useState("");
   const [cityFilter,      setCityFilter]      = useState("");
-  const [admissionFilter, setAdmissionFilter] = useState<AdmissionFilter>("");
   const [ncFilter,        setNcFilter]        = useState<NcFilter>("");
   const [deadlineFilter,  setDeadlineFilter]  = useState<DeadlineFilter>("");
   const [uniAssistFilter, setUniAssistFilter] = useState<UniAssistFilter>("");
+  const [minConf,         setMinConf]         = useState(0.0);
   const [sortKey,         setSortKey]         = useState<"university"|"deadline_wise"|"deadline_sose"|"last_scraped"|"confidence">("last_scraped");
   const [sortDir,         setSortDir]         = useState<"asc"|"desc">("desc");
 
@@ -262,9 +261,8 @@ export default function ProgramsPage() {
   const filtered = useMemo(() => programs.filter(p => {
     // city
     if (cityFilter && p.city !== cityFilter) return false;
-    // admission type
-    if (admissionFilter === "conditional" && !p.conditional_admission) return false;
-    if (admissionFilter === "direct"      &&  p.conditional_admission) return false;
+    // confidence threshold
+    if (p.confidence < minConf) return false;
     // NC
     if (ncFilter === "free") {
       const v = p.nc_value?.toLowerCase().trim() ?? "";
@@ -290,7 +288,7 @@ export default function ProgramsPage() {
     const av = (a[sortKey] ?? "") as string;
     const bv = (b[sortKey] ?? "") as string;
     return av < bv ? -dir : av > bv ? dir : 0;
-  }), [programs, cityFilter, admissionFilter, ncFilter, deadlineFilter, uniAssistFilter, sortKey, sortDir]);
+  }), [programs, cityFilter, minConf, ncFilter, deadlineFilter, uniAssistFilter, sortKey, sortDir]);
 
   // Active filter chips
   const activeFilters: { label: string; clear: () => void }[] = [];
@@ -298,14 +296,14 @@ export default function ProgramsPage() {
   if (langFilter)      activeFilters.push({ label: langFilter,                      clear: () => { setLangFilter(""); loadPrograms("", degFilter, search); } });
   if (degFilter)       activeFilters.push({ label: degFilter,                       clear: () => { setDegFilter(""); loadPrograms(langFilter, "", search); } });
   if (cityFilter)      activeFilters.push({ label: `Şehir: ${cityFilter}`,          clear: () => setCityFilter("") });
-  if (admissionFilter) activeFilters.push({ label: admissionFilter === "direct" ? "Direkt Kabul" : "Şartlı Kabul", clear: () => setAdmissionFilter("") });
   if (ncFilter)        activeFilters.push({ label: ncFilter === "free" ? "NC Yok" : "NC Var",  clear: () => setNcFilter("") });
   if (deadlineFilter)  activeFilters.push({ label: `≤${deadlineFilter}g deadline`,  clear: () => setDeadlineFilter("") });
   if (uniAssistFilter) activeFilters.push({ label: uniAssistFilter === "required" ? "uni-assist gerekli" : "uni-assist yok", clear: () => setUniAssistFilter("") });
+  if (minConf > 0)     activeFilters.push({ label: `Güven ≥${Math.round(minConf*100)}%`,       clear: () => setMinConf(0) });
 
   const clearAll = () => {
     setSearch(""); setLangFilter(""); setDegFilter(""); setCityFilter("");
-    setAdmissionFilter(""); setNcFilter(""); setDeadlineFilter(""); setUniAssistFilter("");
+    setNcFilter(""); setDeadlineFilter(""); setUniAssistFilter(""); setMinConf(0);
     loadPrograms("", "", "");
   };
 
@@ -320,14 +318,13 @@ export default function ProgramsPage() {
   };
 
   const exportCsv = () => {
-    const headers = ["Üniversite","Şehir","Program","Derece","Dil","Almanca Şartı","İngilizce Şartı","NC","Min GPA","WiSe Deadline","SoSe Deadline","uni-assist","Şartlı Kabul","Güven","Güncelleme","URL"];
+    const headers = ["Üniversite","Şehir","Program","Derece","Dil","Almanca Şartı","İngilizce Şartı","NC","Min GPA","WiSe Deadline","SoSe Deadline","uni-assist","Güven","Güncelleme","URL"];
     const rows = filtered.map(p => [
       p.university, p.city, p.program, p.degree, p.language,
       p.german_requirement ?? "", p.english_requirement ?? "",
       p.nc_value ?? "", p.min_gpa ?? "",
       p.deadline_wise ?? "", p.deadline_sose ?? "",
       p.uni_assist ? "Evet" : "Hayır",
-      p.conditional_admission ? "Evet" : "Hayır",
       `${Math.round(p.confidence * 100)}%`, p.last_scraped, p.url ?? "",
     ]);
     const csv = [headers, ...rows]
@@ -687,12 +684,27 @@ export default function ProgramsPage() {
                 {/* Satır 2: Program özellikleri */}
                 <div className="flex flex-wrap gap-2">
                   <div className="flex flex-col gap-0.5">
-                    <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Kabul Türü</label>
-                    <FilterSelect value={admissionFilter} onChange={v => setAdmissionFilter(v as AdmissionFilter)} label="Kabul Türü">
-                      <option value="">Tümü</option>
-                      <option value="direct">Direkt Kabul</option>
-                      <option value="conditional">Şartlı Kabul</option>
-                    </FilterSelect>
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide px-1">Güven Eşiği</label>
+                    <div className="flex gap-1">
+                      {([
+                        [0.0,  "Tümü"],
+                        [0.6,  "≥60%"],
+                        [0.75, "≥75%"],
+                        [0.85, "≥85%"],
+                      ] as [number, string][]).map(([val, lbl]) => (
+                        <button
+                          key={val}
+                          onClick={() => setMinConf(val)}
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            minConf === val
+                              ? "bg-slate-700 text-white"
+                              : "border border-slate-200 text-slate-500 hover:border-slate-300 bg-white"
+                          }`}
+                        >
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-0.5">
@@ -945,15 +957,6 @@ function ProgramRow({ p }: { p: Program }) {
           {!!p.uni_assist && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-medium w-fit">
               uni-assist
-            </span>
-          )}
-          {!!p.conditional_admission ? (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 font-medium w-fit">
-              şartlı kabul
-            </span>
-          ) : (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 font-medium w-fit">
-              direkt kabul
             </span>
           )}
         </div>

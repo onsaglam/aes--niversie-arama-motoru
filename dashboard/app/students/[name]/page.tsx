@@ -8,7 +8,9 @@ import {
   CheckCircle2, AlertTriangle, XCircle, HelpCircle,
   FileText, FileSpreadsheet, Pencil, Trash2,
   FileEdit, X, Loader2, BookmarkCheck, Upload,
+  ChevronDown, ChevronUp, TableProperties,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 
 interface Program {
   university: string;
@@ -166,7 +168,14 @@ export default function StudentPage() {
   const [running, setRunning]   = useState(false);
   const [log, setLog]           = useState("");
   const [exitCode, setExitCode] = useState<number | null>(null);
-  const [filter, setFilter]     = useState<string>("all");
+  const [filter, setFilter]           = useState<string>("uygun");
+  const [langFilter, setLangFilter]   = useState<"" | "de" | "en">("");
+  const [degreeFilter, setDegreeFilter] = useState<"" | "master" | "bachelor">("");
+  const [minConf, setMinConf]         = useState<number>(0.0);
+  const [showLimit, setShowLimit]     = useState(25);
+  const [showUncertain, setShowUncertain] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [expanded, setExpanded]   = useState<string | null>(null);
   const [deleting, setDeleting]   = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
@@ -335,18 +344,111 @@ export default function StudentPage() {
     fetchDetail(); // Sonuçları yenile
   };
 
-  const sorted = [...(detail?.programs ?? [])].sort((a, b) => {
-    const oa = ELIGIBILITY_CONFIG[a.eligibility as keyof typeof ELIGIBILITY_CONFIG]?.order ?? 9;
-    const ob = ELIGIBILITY_CONFIG[b.eligibility as keyof typeof ELIGIBILITY_CONFIG]?.order ?? 9;
-    return oa - ob;
-  });
+  // Helper: nearest upcoming deadline in days (null if none)
+  function exportToExcel(programs: Program[], filename: string) {
+    const rows = programs.map(p => ({
+      "Üniversite":         p.university || "",
+      "Program":            p.program    || "",
+      "Derece":             p.degree     || "",
+      "Şehir":              p.city       || "",
+      "Dil":                p.language   || "",
+      "WiSe Deadline":      p.deadline_wise  || "",
+      "SoSe Deadline":      p.deadline_sose  || "",
+      "Almanca Şartı":      p.german_requirement  || "",
+      "İngilizce Şartı":    p.english_requirement || "",
+      "NC":                 p.nc_value   || "",
+      "Min. GPA (DE)":      p.min_gpa    ?? "",
+      "uni-assist":         p.uni_assist_required ? "Evet" : "Hayır",
+      "Uygunluk":           p.eligibility === "uygun" ? "Uygun"
+                          : p.eligibility === "sartli" ? "Şartlı"
+                          : p.eligibility === "uygun_degil" ? "Uygun Değil"
+                          : "Belirsiz",
+      "Güvenilirlik":       `${Math.round(p.confidence * 100)}%`,
+      "Link":               p.url        || "",
+      "Notlar":             p.notes      || "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Programlar");
+    // Column widths
+    ws["!cols"] = [
+      {wch:30},{wch:40},{wch:12},{wch:18},{wch:14},{wch:14},{wch:14},
+      {wch:16},{wch:16},{wch:8},{wch:12},{wch:10},{wch:14},{wch:10},{wch:40},{wch:40},
+    ];
+    XLSX.writeFile(wb, filename);
+  }
 
-  const filtered = filter === "all" ? sorted : sorted.filter((p) => p.eligibility === filter);
+  function nearestDeadlineDays(p: Program): number | null {
+    const dates = [p.deadline_wise, p.deadline_sose]
+      .map(parseDeadline)
+      .filter((d): d is Date => d !== null)
+      .map(d => Math.floor((d.getTime() - Date.now()) / 86400000))
+      .filter(d => d >= -7); // include very recently passed
+    return dates.length ? Math.min(...dates) : null;
+  }
 
-  const counts = sorted.reduce(
+  const CERTAIN_STATES = new Set(["uygun", "sartli", "uygun_degil"]);
+  const UNCERTAIN_STATES = new Set(["veri_yok", "taranmadi"]);
+
+  const allPrograms = detail?.programs ?? [];
+
+  // Count per eligibility (before lang/conf filter, for badge numbers)
+  const counts = allPrograms.reduce(
     (acc, p) => { acc[p.eligibility] = (acc[p.eligibility] ?? 0) + 1; return acc; },
     {} as Record<string, number>
   );
+
+  // Lang check helper
+  function langMatches(p: Program): boolean {
+    if (!langFilter) return true;
+    const l = (p.language || "").toLowerCase();
+    if (langFilter === "de") return l.includes("almanca") || l.includes("german") || l.includes("deutsch");
+    if (langFilter === "en") return l.includes("ingilizce") || l.includes("english") || l.includes("englisch");
+    return true;
+  }
+
+  // Degree filter helper
+  function degreeMatches(p: Program): boolean {
+    if (!degreeFilter) return true;
+    const d = (p.degree || "").toLowerCase();
+    if (degreeFilter === "master")   return d.includes("master") || d.includes("yüksek");
+    if (degreeFilter === "bachelor") return d.includes("bachelor") || d.includes("lisans");
+    return true;
+  }
+
+  // Search query helper
+  function searchMatches(p: Program): boolean {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (p.university || "").toLowerCase().includes(q) || (p.program || "").toLowerCase().includes(q);
+  }
+
+  // Sorted + filtered main list (certain results only)
+  const sorted = [...allPrograms]
+    .filter(p => CERTAIN_STATES.has(p.eligibility))
+    .filter(p => p.confidence >= minConf)
+    .filter(langMatches)
+    .filter(degreeMatches)
+    .filter(searchMatches)
+    .filter(p => filter === "all" || p.eligibility === filter)
+    .sort((a, b) => {
+      // Primary: eligibility order
+      const oa = ELIGIBILITY_CONFIG[a.eligibility as keyof typeof ELIGIBILITY_CONFIG]?.order ?? 9;
+      const ob = ELIGIBILITY_CONFIG[b.eligibility as keyof typeof ELIGIBILITY_CONFIG]?.order ?? 9;
+      if (oa !== ob) return oa - ob;
+      // Secondary: nearest deadline (ascending)
+      const da = nearestDeadlineDays(a) ?? 9999;
+      const db = nearestDeadlineDays(b) ?? 9999;
+      return da - db;
+    });
+
+  // Uncertain (veri_yok + taranmadi) — separate section
+  const uncertainPrograms = allPrograms
+    .filter(p => UNCERTAIN_STATES.has(p.eligibility))
+    .filter(p => p.confidence >= minConf)
+    .filter(langMatches)
+    .filter(degreeMatches)
+    .filter(searchMatches);
 
   if (loading) return (
     <div className="text-center py-20 text-slate-400">
@@ -762,53 +864,187 @@ export default function StudentPage() {
       )}
 
       {/* Sonuç tablosu */}
-      {sorted.length > 0 && (
+      {allPrograms.length > 0 && (
         <div className="space-y-4">
 
-          {/* Filtre butonları */}
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setFilter("all")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                filter === "all"
-                  ? "bg-slate-800 text-white"
-                  : "bg-white border border-slate-200 text-slate-600 hover:border-slate-300"
-              }`}
-            >
-              Tümü ({sorted.length})
-            </button>
-            {(["uygun", "sartli", "uygun_degil", "veri_yok", "taranmadi"] as const).map((key) =>
-              counts[key] ? (
+          {/* Filtre satırı */}
+          <div className="space-y-2">
+
+            {/* Arama kutusu */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Üniversite veya program ara..."
+                value={searchQuery}
+                onChange={e => { setSearchQuery(e.target.value); setShowLimit(25); }}
+                className="w-full pl-3 pr-8 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
+              />
+              {searchQuery && (
                 <button
-                  key={key}
-                  onClick={() => setFilter(key)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    filter === key
-                      ? "bg-slate-800 text-white"
-                      : `${ELIGIBILITY_CONFIG[key].badge} border border-transparent`
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Uygunluk sekmeleri */}
+            <div className="flex flex-wrap gap-2">
+              {(["uygun", "sartli", "uygun_degil", "all"] as const).map((key) => {
+                const isAll = key === "all";
+                const cnt   = isAll
+                  ? allPrograms.filter(p => CERTAIN_STATES.has(p.eligibility)).length
+                  : (counts[key] ?? 0);
+                if (!cnt && !isAll) return null;
+                const cfg = isAll ? null : ELIGIBILITY_CONFIG[key];
+                return (
+                  <button
+                    key={key}
+                    onClick={() => { setFilter(key); setShowLimit(25); }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      filter === key
+                        ? "bg-slate-800 text-white"
+                        : isAll
+                          ? "bg-white border border-slate-200 text-slate-600 hover:border-slate-300"
+                          : `${cfg!.badge} border border-transparent`
+                    }`}
+                  >
+                    {isAll ? `Tümü (${cnt})` : `${cfg!.label} (${cnt})`}
+                  </button>
+                );
+              })}
+
+              {/* Derece toggle */}
+              <div className="ml-auto flex gap-1">
+                {([["", "Tüm Derece"], ["master", "🎓 Master"], ["bachelor", "📚 Bachelor"]] as const).map(([val, lbl]) => (
+                  <button
+                    key={val}
+                    onClick={() => { setDegreeFilter(val); setShowLimit(25); }}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      degreeFilter === val
+                        ? "bg-purple-600 text-white"
+                        : "bg-white border border-slate-200 text-slate-500 hover:border-purple-200"
+                    }`}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+
+              {/* Dil toggle */}
+              <div className="flex gap-1">
+                {([["", "Tüm Dil"], ["de", "🇩🇪"], ["en", "🇬🇧"]] as const).map(([val, lbl]) => (
+                  <button
+                    key={val}
+                    onClick={() => { setLangFilter(val); setShowLimit(25); }}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      langFilter === val
+                        ? "bg-blue-600 text-white"
+                        : "bg-white border border-slate-200 text-slate-500 hover:border-blue-200"
+                    }`}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Güven eşiği */}
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span>Güven eşiği:</span>
+              {([
+                [0.0,  "Tümü"],
+                [0.6,  "≥60%"],
+                [0.75, "≥75%"],
+                [0.85, "Yüksek ≥85%"],
+              ] as [number, string][]).map(([val, lbl]) => (
+                <button
+                  key={val}
+                  onClick={() => { setMinConf(val); setShowLimit(25); }}
+                  className={`px-2 py-1 rounded text-xs transition-colors ${
+                    minConf === val
+                      ? "bg-slate-700 text-white"
+                      : "border border-slate-200 text-slate-500 hover:border-slate-300"
                   }`}
                 >
-                  {ELIGIBILITY_CONFIG[key].label} ({counts[key]})
+                  {lbl}
                 </button>
-              ) : null
-            )}
+              ))}
+              <span className="ml-auto text-slate-400">
+                <span className="font-semibold text-slate-600">{sorted.length}</span> program gösteriliyor
+                {(langFilter || degreeFilter || minConf > 0 || searchQuery) && (
+                  <button
+                    className="ml-2 text-blue-500 hover:underline"
+                    onClick={() => { setLangFilter(""); setDegreeFilter(""); setMinConf(0); setSearchQuery(""); setShowLimit(25); }}
+                  >
+                    Sıfırla
+                  </button>
+                )}
+              </span>
+            </div>
           </div>
 
+          {/* Seçim aksiyonları */}
+          {selectedKeys.size > 0 && (
+            <div className="flex items-center gap-3 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm">
+              <TableProperties className="w-4 h-4 shrink-0" />
+              <span className="font-medium">{selectedKeys.size} okul seçildi</span>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const selectedPrograms = allPrograms.filter(p => selectedKeys.has(`${p.university}||${p.program}`));
+                    const studentName = detail?.name ?? "ogrenci";
+                    exportToExcel(selectedPrograms, `${studentName}_secilen_okullar.xlsx`);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-blue-700 rounded-lg text-xs font-medium hover:bg-blue-50 transition-colors"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  Excel İndir
+                </button>
+                <button
+                  onClick={() => setSelectedKeys(new Set())}
+                  className="p-1.5 hover:bg-blue-500 rounded-lg transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Tablo */}
-          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+            <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs">Üniversite</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden md:table-cell">Program</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden sm:table-cell">Şehir</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs hidden lg:table-cell">Dil</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs">Uygunluk</th>
+                  <th className="px-3 py-3 w-8">
+                    <input
+                      type="checkbox"
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-400"
+                      checked={sorted.slice(0, showLimit).length > 0 && sorted.slice(0, showLimit).every(p => selectedKeys.has(`${p.university}||${p.program}`))}
+                      onChange={e => {
+                        const keys = sorted.slice(0, showLimit).map(p => `${p.university}||${p.program}`);
+                        setSelectedKeys(prev => {
+                          const next = new Set(prev);
+                          if (e.target.checked) keys.forEach(k => next.add(k));
+                          else keys.forEach(k => next.delete(k));
+                          return next;
+                        });
+                      }}
+                    />
+                  </th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs whitespace-nowrap">Üniversite</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs whitespace-nowrap">Program</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs whitespace-nowrap">Derece</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs whitespace-nowrap">Dil</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs whitespace-nowrap">WiSe</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs whitespace-nowrap">SoSe</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-600 text-xs whitespace-nowrap">Uygunluk</th>
                   <th className="px-4 py-3 text-xs"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtered.map((p) => {
+                {sorted.slice(0, showLimit).map((p) => {
                   const cfg = ELIGIBILITY_CONFIG[p.eligibility as keyof typeof ELIGIBILITY_CONFIG]
                     ?? ELIGIBILITY_CONFIG.veri_yok;
                   const rowKey = `${p.university}||${p.program}`;
@@ -816,39 +1052,88 @@ export default function StudentPage() {
                   const hasDetails = p.deadline_wise || p.deadline_sose || p.german_requirement
                     || p.english_requirement || p.nc_value || p.notes
                     || p.issues?.length || p.passed_checks?.length;
+
+                  // Degree badge
+                  const degLower = (p.degree || "").toLowerCase();
+                  const degBadge = degLower.includes("master") || degLower.includes("yüksek")
+                    ? "bg-purple-100 text-purple-700"
+                    : degLower.includes("bachelor") || degLower.includes("lisans")
+                      ? "bg-blue-100 text-blue-700"
+                      : "bg-slate-100 text-slate-500";
+                  const degLabel = degLower.includes("master") || degLower.includes("yüksek") ? "Master"
+                    : degLower.includes("bachelor") || degLower.includes("lisans") ? "Bachelor"
+                    : p.degree || "—";
+
+                  // Language badge
+                  const langLower = (p.language || "").toLowerCase();
+                  const langBadge = langLower.includes("almanca") || langLower.includes("german") || langLower.includes("deutsch")
+                    ? "bg-amber-100 text-amber-700"
+                    : langLower.includes("ingilizce") || langLower.includes("english")
+                      ? "bg-sky-100 text-sky-700"
+                      : "bg-slate-100 text-slate-500";
+                  const langLabel = langLower.includes("almanca") || langLower.includes("german") || langLower.includes("deutsch") ? "🇩🇪 Almanca"
+                    : langLower.includes("ingilizce") || langLower.includes("english") ? "🇬🇧 İngilizce"
+                    : p.language || "—";
+
+                  const isSelected = selectedKeys.has(rowKey);
                   return (
                     <React.Fragment key={rowKey}>
                       <tr
-                        className={`${cfg.row} transition-opacity ${hasDetails ? "cursor-pointer hover:opacity-90" : ""}`}
+                        className={`${isSelected ? "bg-blue-50" : cfg.row} transition-colors ${hasDetails ? "cursor-pointer hover:opacity-90" : ""}`}
                         onClick={() => hasDetails ? setExpanded(isExpanded ? null : rowKey) : undefined}
                       >
-                        <td className="px-4 py-3 font-medium text-slate-800 max-w-[160px] truncate">
+                        <td className="px-3 py-3 w-8" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-400"
+                            onChange={e => {
+                              setSelectedKeys(prev => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(rowKey);
+                                else next.delete(rowKey);
+                                return next;
+                              });
+                            }}
+                          />
+                        </td>
+                        <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap max-w-[180px] truncate">
                           {p.university || "—"}
                         </td>
-                        <td className="px-4 py-3 text-slate-600 hidden md:table-cell max-w-[200px] truncate">
+                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap max-w-[220px] truncate">
                           {p.program || "—"}
                         </td>
-                        <td className="px-4 py-3 text-slate-500 text-xs hidden sm:table-cell">
-                          {p.city || "—"}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${degBadge}`}>
+                            {degLabel}
+                          </span>
                         </td>
-                        <td className="px-4 py-3 text-slate-500 text-xs hidden lg:table-cell truncate max-w-[100px]">
-                          {p.language || "—"}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${langBadge}`}>
+                            {langLabel}
+                          </span>
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 text-xs whitespace-nowrap">
+                          {p.deadline_wise
+                            ? (() => {
+                                const u = deadlineUrgency(p.deadline_wise);
+                                return <span className={u?.cls ?? "text-slate-600"}>{p.deadline_wise}</span>;
+                              })()
+                            : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-xs whitespace-nowrap">
+                          {p.deadline_sose
+                            ? (() => {
+                                const u = deadlineUrgency(p.deadline_sose);
+                                return <span className={u?.cls ?? "text-slate-600"}>{p.deadline_sose}</span>;
+                              })()
+                            : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
                           <div className="flex flex-col gap-1">
                             <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium w-fit ${cfg.badge}`}>
                               {cfg.label}
                             </span>
-                            {(() => {
-                              const wu = deadlineUrgency(p.deadline_wise);
-                              const su = deadlineUrgency(p.deadline_sose);
-                              const best = (wu && !wu.cls.includes("line-through")) ? wu
-                                         : (su && !su.cls.includes("line-through")) ? su
-                                         : null;
-                              return best ? (
-                                <span className={`text-xs ${best.cls}`}>{best.text}</span>
-                              ) : null;
-                            })()}
                             {(() => {
                               const tr = getTracking(p.university, p.program);
                               if (!tr) return null;
@@ -861,7 +1146,7 @@ export default function StudentPage() {
                             })()}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="px-4 py-3 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-2">
                             {hasDetails && (
                               <span className="text-slate-300 text-xs">{isExpanded ? "▲" : "▼"}</span>
@@ -882,7 +1167,7 @@ export default function StudentPage() {
                       </tr>
                       {isExpanded && (
                         <tr key={`${rowKey}-detail`} className={cfg.row}>
-                          <td colSpan={6} className="px-4 pb-4">
+                          <td colSpan={9} className="px-4 pb-4">
                             <div className="pt-2 border-t border-slate-200/60 space-y-3">
 
                               {/* Eligibility reason — en önemli bilgi, en üstte */}
@@ -919,7 +1204,6 @@ export default function StudentPage() {
                                 {p.nc_value            && <span><span className="text-slate-400">NC:</span> {p.nc_value}</span>}
                                 {p.min_gpa             && <span><span className="text-slate-400">Min. GPA (DE):</span> {p.min_gpa}</span>}
                                 {p.uni_assist_required && <span className="text-amber-600 font-medium">uni-assist gerekli</span>}
-                                {p.conditional_admission && <span className="text-blue-600">Şartlı kabul mevcut</span>}
                                 {p.confidence < 0.6    && (
                                   <span className="text-slate-400 text-xs">Güvenilirlik: {Math.round(p.confidence * 100)}%</span>
                                 )}
@@ -992,10 +1276,102 @@ export default function StudentPage() {
               </tbody>
             </table>
           </div>
+
+          {/* "+N daha yükle" button */}
+          {sorted.length > showLimit && (
+            <div className="text-center pt-2">
+              <button
+                onClick={() => setShowLimit(n => n + 25)}
+                className="px-4 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                +{Math.min(25, sorted.length - showLimit)} daha yükle
+                <span className="ml-1.5 text-slate-400">({showLimit}/{sorted.length})</span>
+              </button>
+            </div>
+          )}
+
+          {/* Belirsiz / Veri Eksik section */}
+        {uncertainPrograms.length > 0 && (
+          <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <button
+              className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
+              onClick={() => setShowUncertain(v => !v)}
+            >
+              <span className="text-xs font-medium text-slate-600">
+                ❓ Belirsiz / Veri Eksik
+                <span className="ml-2 bg-slate-200 text-slate-500 rounded-full px-2 py-0.5 text-xs">{uncertainPrograms.length}</span>
+              </span>
+              {showUncertain ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+            </button>
+            {showUncertain && (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-white">
+                      <th className="text-left px-4 py-2 font-medium text-slate-500 text-xs">Üniversite</th>
+                      <th className="text-left px-4 py-2 font-medium text-slate-500 text-xs">Program</th>
+                      <th className="text-left px-4 py-2 font-medium text-slate-500 text-xs">Derece</th>
+                      <th className="text-left px-4 py-2 font-medium text-slate-500 text-xs">Dil</th>
+                      <th className="text-left px-4 py-2 font-medium text-slate-500 text-xs">Durum</th>
+                      <th className="px-4 py-2 text-xs"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {uncertainPrograms.map((p) => {
+                      const cfg = ELIGIBILITY_CONFIG[p.eligibility as keyof typeof ELIGIBILITY_CONFIG]
+                        ?? ELIGIBILITY_CONFIG.veri_yok;
+                      const degLower = (p.degree || "").toLowerCase();
+                      const degBadge = degLower.includes("master") || degLower.includes("yüksek")
+                        ? "bg-purple-100 text-purple-700"
+                        : degLower.includes("bachelor") || degLower.includes("lisans")
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-slate-100 text-slate-500";
+                      const degLabel = degLower.includes("master") || degLower.includes("yüksek") ? "Master"
+                        : degLower.includes("bachelor") || degLower.includes("lisans") ? "Bachelor"
+                        : p.degree || "—";
+                      const langLower = (p.language || "").toLowerCase();
+                      const langBadge = langLower.includes("almanca") || langLower.includes("german") || langLower.includes("deutsch")
+                        ? "bg-amber-100 text-amber-700"
+                        : langLower.includes("ingilizce") || langLower.includes("english")
+                          ? "bg-sky-100 text-sky-700"
+                          : "bg-slate-100 text-slate-500";
+                      const langLabel = langLower.includes("almanca") || langLower.includes("german") || langLower.includes("deutsch") ? "🇩🇪 Almanca"
+                        : langLower.includes("ingilizce") || langLower.includes("english") ? "🇬🇧 İngilizce"
+                        : p.language || "—";
+                      return (
+                        <tr key={`${p.university}||${p.program}`} className="hover:bg-slate-50">
+                          <td className="px-4 py-2 text-slate-700 text-xs whitespace-nowrap max-w-[180px] truncate">{p.university || "—"}</td>
+                          <td className="px-4 py-2 text-slate-600 text-xs whitespace-nowrap max-w-[220px] truncate">{p.program || "—"}</td>
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${degBadge}`}>{degLabel}</span>
+                          </td>
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${langBadge}`}>{langLabel}</span>
+                          </td>
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${cfg.badge}`}>{cfg.label}</span>
+                          </td>
+                          <td className="px-4 py-2 text-right whitespace-nowrap">
+                            {p.url && (
+                              <a href={p.url} target="_blank" rel="noopener noreferrer"
+                                className="text-slate-400 hover:text-blue-600 transition-colors">
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
         </div>
       )}
 
-      {sorted.length === 0 && !running && (
+      {allPrograms.length === 0 && !running && (
         <div className="text-center py-16 text-slate-400 bg-white rounded-xl border border-slate-200">
           <Play className="w-10 h-10 mx-auto mb-3 opacity-30" />
           <p className="font-medium">Araştırma sonucu yok</p>

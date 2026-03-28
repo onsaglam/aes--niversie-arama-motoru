@@ -1240,19 +1240,34 @@ def _program_relevance_score(program_name: str, desired_field: str) -> float:
     prog_l  = program_name.lower()
     field_l = desired_field.lower()
 
+    # FIELD_SYNONYMS varyantlarını da dahil et (Türkçe → Almanca/İngilizce eşleşmesi için)
+    variants = get_field_query_variants(desired_field)
+    all_field_terms = set()
+    for v in variants:
+        for w in v.lower().split():
+            if len(w) >= 4:
+                all_field_terms.add(w)
+    for w in field_l.split():
+        if len(w) >= 4:
+            all_field_terms.add(w)
+
+    # Varyantların herhangi biri program adında geçiyorsa yüksek skor ver
+    if any(v.lower() in prog_l for v in variants):
+        return 0.9
+
     # Anahtar kelimeler
     field_words = [w for w in field_l.split() if len(w) >= 4]
     if not field_words:
         return 0.5
 
-    match_count = sum(1 for w in field_words if w in prog_l)
-    score = match_count / len(field_words)
+    match_count = sum(1 for w in all_field_terms if w in prog_l)
+    score = min(match_count / max(len(field_words), 1), 1.0)
 
     # Bazı yaygın engineering alt alanları arasında ilişki tanı (Türkçe + Almanca + İngilizce)
     related_groups = [
         {"industrial", "wirtschaftsingenieur", "production", "manufacturing",
-         "logistics", "logistik", "operations", "management", "supply chain",
-         "endüstri", "endüstriyel", "üretim"},
+         "endüstri", "endüstriyel", "üretim", "industrial engineering",
+         "wirtschaftsingenieurwesen", "industrietechnik"},
         {"mechanical", "maschinenbau", "machine", "automotive", "fahrzeug",
          "mechatronics", "mechatronik", "maschinentechnik", "makine"},
         {"electrical", "electronic", "elektrotechnik", "elektro", "power",
