@@ -14,8 +14,83 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-DB_PATH      = Path(__file__).parent.parent / "programs.db"
+DB_PATH        = Path(__file__).parent.parent / "programs.db"
 CACHE_TTL_DAYS = 30
+
+# ── Özel / ücretli üniversite kara listesi ──────────────────────────────────
+# Bu üniversitelerin programları veritabanına kaydedilmez.
+# Kural: yalnızca devlet üniversiteleri (staatliche Hochschulen) kabul edilir.
+PRIVATE_UNIVERSITY_BLACKLIST: frozenset[str] = frozenset({
+    # Özel üniversiteler (Privatuniversitäten)
+    "Constructor University",
+    "Bucerius Law School",
+    "HHL Leipzig Graduate School of Management",
+    "Frankfurt School of Finance & Management",
+    "EBS Universität für Wirtschaft und Recht",
+    "ESCP Berlin Campus",
+    "ESCP Business School",
+    "WHU - Otto Beisheim School of Management",
+    "Zeppelin University",
+    "Witten/Herdecke University",
+    "Universität Witten/Herdecke",
+    "accadis Hochschule Bad Homburg | University of Applied Sciences",
+    "accadis Hochschule Bad Homburg",
+    "Berlin International University of Applied Sciences",
+    "Hochschule Fresenius - University of Applied Sciences",
+    "Hochschule Fresenius",
+    "SRH Distance Learning University",
+    "SRH University",
+    "SRH Hochschule Berlin",
+    "SRH Hochschule Hamburg",
+    "SRH Hochschule Heidelberg",
+    "Dresden International University",
+    "Hertie School",
+    "Friedensau Adventist University",
+    "Catholic University of Eichstätt-Ingolstadt",
+    "Katholische Universität Eichstätt-Ingolstadt",
+    "Catholic University of Applied Sciences North Rhine-Westphalia",
+    "Katholische Hochschule Nordrhein-Westfalen",
+    "bbw Hochschule - University of Applied Sciences",
+    "bbw Hochschule",
+    "University of Applied Management Studies",
+    "Hochschule für angewandtes Management",
+    "Fachhochschule Wedel University of Applied Sciences",
+    "Fachhochschule Wedel",
+    "ifs Internationale Filmschule Köln",
+    "Bavarian University of Business and Technology (HDBW)",
+    "HDBW Hochschule der Bayerischen Wirtschaft",
+    "ASH Berlin",
+    "Alice Salomon Hochschule Berlin",
+    "International School of Management",
+    "ISM International School of Management",
+    "Macromedia University of Applied Sciences",
+    "Hochschule Macromedia",
+    "IU International University of Applied Sciences",
+    "IU Internationale Hochschule",
+    "Diploma Hochschule",
+    "AKAD University",
+    "EU Business School",
+    "Schiller International University",
+    "Touro College Berlin",
+    "AMD Akademie Mode & Design",
+    "Mediadesign Hochschule",
+    "Hochschule für Kommunikation und Gestaltung",
+    "Steinbeis University Berlin",
+    "Steinbeis-Hochschule",
+    # Araştırma enstitüleri (üniversite değil)
+    "Daad",
+    "German Academic Exchange Service (DAAD)",
+    "Helmholtz Centre for Environmental Research - UFZ",
+    "Helmholtz-Zentrum für Umweltforschung",
+    "German Cancer Research Center (DKFZ) Heidelberg",
+    "Deutsches Krebsforschungszentrum",
+    "Deutsches Elektronen-Synchrotron DESY",
+    "The Max Planck Institute for Neurobiology of Behavior – caesar",
+    "Helmholtz-Zentrum Dresden-Rossendorf",
+    "Max Planck Institute",
+    "Fraunhofer Institute",
+    "Leibniz Institute",
+})
 
 
 class ProgramDatabase:
@@ -177,7 +252,23 @@ class ProgramDatabase:
     # ── Yazma ───────────────────────────────────────────────────────────────────
 
     def save_program(self, data: dict) -> None:
-        """Programı DB'ye ekle veya güncelle (upsert)."""
+        """Programı DB'ye ekle veya güncelle (upsert).
+
+        Özel / ücretli üniversiteler (PRIVATE_UNIVERSITY_BLACKLIST) atlanır.
+        """
+        university = data.get("university", "").strip()
+        if university in PRIVATE_UNIVERSITY_BLACKLIST:
+            logger.debug(f"DB skip (private): {university}")
+            return
+        # Kısmi eşleşme: blacklist anahtar kelimesi üniversite adında geçiyorsa atla
+        uni_lower = university.lower()
+        _partial_deny = ("srh ", "iubh", "iu internationale", "steinbeis", "macromedia",
+                         "diploma hochschule", "akad ", "eu business school",
+                         "max planck institute", "fraunhofer institute", "leibniz institute")
+        if any(kw in uni_lower for kw in _partial_deny):
+            logger.debug(f"DB skip (private/partial): {university}")
+            return
+
         url = data.get("url") or None
         pid = self._make_id(url or "", data.get("university", ""), data.get("program", ""))
         now = datetime.now().isoformat()
