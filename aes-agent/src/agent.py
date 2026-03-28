@@ -522,7 +522,8 @@ async def search_programs_daad(profile) -> list[ProgramDetail]:
             # Client-side derece filtresi (filtresiz sorgu için)
             if apply_degree_filter and target_degree:
                 item_deg = (item.get("preparationForDegree") or "").lower()
-                if item_deg and target_degree not in item_deg:
+                # item_deg boşsa da filtrele — degree bilinmiyorsa kabul etme
+                if not item_deg or target_degree not in item_deg:
                     continue
 
             # Dil filtresi
@@ -541,7 +542,7 @@ async def search_programs_daad(profile) -> list[ProgramDetail]:
                 university     = uni_name,
                 city           = item.get("city", ""),
                 program        = item.get("courseName", ""),
-                degree         = item.get("preparationForDegree", profile.degree_type),
+                degree         = item.get("preparationForDegree") or profile.degree_type,
                 language       = ", ".join(langs),
                 url            = link,
                 deadline_wise  = _dwise,
@@ -1313,6 +1314,59 @@ def merge_programs(lists: list[list]) -> list[ProgramDetail]:
     return merged
 
 
+# Hedef dereceyle uyumsuz programları temizleyen kelimeler
+_DEGREE_CONFLICT: dict[str, tuple[str, ...]] = {
+    # Master arıyorken bunlar program adında geçiyorsa reddet
+    "Master": ("bachelor's degree", "bachelor of", "b.sc.", "b.eng.", "bsc ", "beng ",
+               "undergraduate", "exchange semester", "preparatory semester",
+               "vorsemester", "studienkolleg"),
+    # Bachelor arıyorken bunlar program adında geçiyorsa reddet
+    "Bachelor": ("master's degree", "master of", "m.sc.", "m.eng.", "msc ", "meng ",
+                 "phd", "doctorate"),
+}
+
+def filter_by_degree(programs: list[ProgramDetail], target_degree: str) -> tuple[list[ProgramDetail], int]:
+    """
+    Hedef dereceyle açıkça çelişen programları listeden çıkar.
+
+    Kural:
+      1. prog.degree belli ve hedefle çelişiyorsa → reddet
+      2. prog.degree belli değil ama program adı hedefle çelişiyorsa → reddet
+      3. prog.degree belli değil, program adı da belirsiz → kabul et (şüphe durumunda dahil et)
+    """
+    if not target_degree:
+        return programs, 0
+
+    target_lower = target_degree.lower()
+    conflict_keywords = _DEGREE_CONFLICT.get(target_degree, ())
+    kept, removed = [], 0
+
+    for p in programs:
+        deg = (p.degree or "").lower().strip()
+        prog_name = (p.program or "").lower()
+
+        # Derece açıkça belirtilmiş ve hedefle çelişiyor
+        if deg:
+            # Master arıyoruz ama degree="Bachelor" gibi
+            if target_lower not in deg:
+                # "Bachelor/Master" veya "Lisans / Yüksek Lisans" gibi karma değerlere izin ver
+                mixed_ok = any(kw in deg for kw in (target_lower, "yüksek lisans"))
+                if not mixed_ok:
+                    removed += 1
+                    logging.debug(f"Derece uyumsuz atlandı: [{p.degree}] {p.university} — {p.program[:40]}")
+                    continue
+
+        # Program adından çelişki tespiti
+        if any(kw in prog_name for kw in conflict_keywords):
+            removed += 1
+            logging.debug(f"Program adı çelişiyor atlandı: {p.university} — {p.program[:50]}")
+            continue
+
+        kept.append(p)
+
+    return kept, removed
+
+
 # ─── Terminal Özet Tablosu ────────────────────────────────────────────────────
 
 def print_summary(programs: list[ProgramDetail], profile):
@@ -1401,6 +1455,16 @@ async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
 
     all_programs = merge_programs([daad_programs, mastersportal_progs, direct_uni_progs, web_programs, hochschulstart_progs])
 
+    # Hedef dereceyle açıkça çelişen programları temizle
+    if profile.degree_type:
+        all_programs, removed_count = filter_by_degree(all_programs, profile.degree_type)
+        if removed_count:
+            console.print(
+                f"      🧹 {removed_count} program derece uyumsuzluğu nedeniyle çıkarıldı "
+                f"(hedef: {profile.degree_type})",
+                style="dim",
+            )
+
     # ── DB önbellekten ek program yükle ───────────────────────────────
     # Daha önce başka öğrenci için taranmış programları içe al —
     # bunlar scraping olmadan hazır veriye sahip.
@@ -1435,6 +1499,15 @@ async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
             console.print(f"      💾 DB önbellekten {new_from_db} ek program eklendi", style="dim")
     except Exception as e:
         logging.warning(f"DB önbellek yükleme hatası: {e}")
+
+    # DB'den gelen programları da derece filtrele
+    if profile.degree_type:
+        all_programs, db_removed = filter_by_degree(all_programs, profile.degree_type)
+        if db_removed:
+            console.print(
+                f"      🧹 DB'den {db_removed} program daha derece uyumsuzluğu nedeniyle çıkarıldı",
+                style="dim",
+            )
 
     console.print(f"\n      Toplam {len(all_programs)} benzersiz program bulundu")
 
