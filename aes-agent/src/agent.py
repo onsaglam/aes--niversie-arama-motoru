@@ -326,21 +326,81 @@ _DOMAIN_TO_UNI: dict[str, str] = {
     "uni-hohenheim.de":     "Universität Hohenheim",
     "uni-koblenz.de":       "Universität Koblenz",
     "uni-trier.de":         "Universität Trier",
+    # Fachhochschulen / Technische Hochschulen
+    "th-koeln.de":          "TH Köln",
+    "hm.edu":               "Hochschule München",
+    "hs-karlsruhe.de":      "Hochschule Karlsruhe",
+    "hs-hannover.de":       "Hochschule Hannover",
+    "hsd.de":               "Hochschule Düsseldorf",
+    "hs-rheinmain.de":      "Hochschule RheinMain",
+    "hs-fulda.de":          "Hochschule Fulda",
+    "hs-offenburg.de":      "Hochschule Offenburg",
+    "hs-pforzheim.de":      "Hochschule Pforzheim",
+    "hs-aalen.de":          "Hochschule Aalen",
+    "hs-esslingen.de":      "Hochschule Esslingen",
+    "hs-bochum.de":         "Hochschule Bochum",
+    "fhws.de":              "FHWS Würzburg-Schweinfurt",
+    "haw-hamburg.de":       "HAW Hamburg",
+    "ostfalia.de":          "Ostfalia Hochschule",
+    "oth-regensburg.de":    "OTH Regensburg",
+    "oth-aw.de":            "OTH Amberg-Weiden",
+    "hs-niederrhein.de":    "Hochschule Niederrhein",
+    "h-brs.de":             "Hochschule Bonn-Rhein-Sieg",
+    "hs-kl.de":             "Hochschule Kaiserslautern",
+    "hs-trier.de":          "Hochschule Trier",
+    "hs-koblenz.de":        "Hochschule Koblenz",
+    "tu-chemnitz.de":       "TU Chemnitz",
+    "tu-freiberg.de":       "TU Bergakademie Freiberg",
+    "tu-ilmenau.de":        "TU Ilmenau",
+    "uni-bayreuth.de":      "Universität Bayreuth",
+    "uni-regensburg.de":    "Universität Regensburg",
+    "uni-passau.de":        "Universität Passau",
+    "uni-rostock.de":       "Universität Rostock",
+    "uni-greifswald.de":    "Universität Greifswald",
+    "uni-jena.de":          "Friedrich-Schiller-Universität Jena",
+    "uni-halle.de":         "MLU Halle-Wittenberg",
+    "rptu.de":              "RPTU Kaiserslautern-Landau",
+    "uni-erfurt.de":        "Universität Erfurt",
+    "buw.de":               "Bergische Universität Wuppertal",
+    "fernuni-hagen.de":     "FernUniversität Hagen",
+    "uni-potsdam.de":       "Universität Potsdam",
+    "europa-uni.de":        "Europa-Universität Viadrina",
+    "tu-clausthal.de":      "TU Clausthal",
+    "uni-luebeck.de":       "Universität Lübeck",
+    "uni-flensburg.de":     "Europa-Universität Flensburg",
 }
 
 # Direkt program araması için hedef üniversiteler — devlet üniversiteleri
 _TARGET_UNIVERSITIES: list[str] = [
+    # TU9 ve araştırma üniversiteleri
     "TU München", "TU Berlin", "RWTH Aachen", "TU Dresden", "KIT Karlsruhe",
     "TU Darmstadt", "Universität Stuttgart", "Leibniz Universität Hannover",
     "TU Braunschweig", "LMU München", "Universität Hamburg", "Universität Bremen",
-    "Hochschule Bremen", "Goethe-Universität Frankfurt", "Universität Köln",
-    "Universität Bonn", "Universität Münster", "FAU Erlangen-Nürnberg",
-    "Universität Mannheim", "Ruhr-Universität Bochum", "TU Dortmund",
-    "FU Berlin", "HU Berlin", "Universität Heidelberg", "Universität Freiburg",
-    "Universität Göttingen", "Universität Leipzig", "Universität Tübingen",
-    "Universität Würzburg", "JGU Mainz", "Universität des Saarlandes",
-    "Universität Duisburg-Essen", "Universität Paderborn", "Universität Bielefeld",
-    "Universität Kassel", "CAU Kiel", "Universität Ulm", "Universität Augsburg",
+    "Goethe-Universität Frankfurt", "Universität Köln", "Universität Bonn",
+    "Universität Münster", "FAU Erlangen-Nürnberg", "Universität Mannheim",
+    "Ruhr-Universität Bochum", "TU Dortmund", "FU Berlin", "HU Berlin",
+    "Universität Heidelberg", "Universität Freiburg", "Universität Göttingen",
+    "Universität Leipzig", "Universität Tübingen", "Universität Würzburg",
+    "JGU Mainz", "Universität des Saarlandes", "Universität Duisburg-Essen",
+    "Universität Paderborn", "Universität Bielefeld", "Universität Kassel",
+    "CAU Kiel", "Universität Ulm", "Universität Augsburg",
+    # Ek araştırma üniversiteleri
+    "Universität Bayreuth", "Universität Regensburg", "Universität Passau",
+    "Universität Konstanz", "Universität Rostock", "Universität Greifswald",
+    "Friedrich-Schiller-Universität Jena", "MLU Halle-Wittenberg",
+    "Universität Hohenheim", "Universität Koblenz", "Universität Trier",
+    "TU Chemnitz", "TU Ilmenau", "TU Bergakademie Freiberg",
+    "RPTU Kaiserslautern-Landau", "Universität Erfurt", "Universität Potsdam",
+    "Bergische Universität Wuppertal", "Universität Lübeck",
+    # Bremen bölgesi (AES ana bölgesi)
+    "Hochschule Bremen",
+    # Fachhochschulen / Technische Hochschulen (uygulamalı bilimler)
+    "TH Köln", "Hochschule München", "Hochschule Karlsruhe",
+    "Hochschule Hannover", "Hochschule Düsseldorf", "Hochschule RheinMain",
+    "Hochschule Pforzheim", "Hochschule Aalen", "Hochschule Esslingen",
+    "Hochschule Bochum", "HAW Hamburg", "Ostfalia Hochschule",
+    "OTH Regensburg", "Hochschule Niederrhein", "Hochschule Bonn-Rhein-Sieg",
+    "Hochschule Fulda", "Hochschule Offenburg", "FHWS Würzburg-Schweinfurt",
 ]
 
 
@@ -445,6 +505,91 @@ FIELD_SYNONYMS: dict[str, list[str]] = {
     "kontrol mühendisliği":         ["Regelungstechnik", "Control Engineering"],
     "network mühendisliği":         ["Netzwerktechnik", "Network Engineering", "Informatik"],
     "siber güvenlik":               ["IT-Sicherheit", "Cybersecurity", "Informatik"],
+    # Ek Türkçe alanlar
+    "robotik":                      ["Robotik", "Robotics", "Automation"],
+    "otomasyon":                    ["Automatisierungstechnik", "Automation", "Regelungstechnik"],
+    "biyoinformatik":               ["Bioinformatik", "Bioinformatics"],
+    "sağlık yönetimi":              ["Gesundheitsmanagement", "Health Management"],
+    "hastane yönetimi":             ["Krankenhausmanagement", "Hospital Management"],
+    "uluslararası ticaret":         ["Internationales Management", "International Business"],
+    "uluslararası işletme":         ["Internationales Management", "International Business", "BWL"],
+    "turizm yönetimi":              ["Tourismusmanagement", "Tourism Management"],
+    "otel yönetimi":                ["Hotelmanagement", "Hospitality Management"],
+    "insan kaynakları":             ["Personalmanagement", "Human Resource Management", "BWL"],
+    "peyzaj mimarlığı":             ["Landschaftsarchitektur", "Landscape Architecture"],
+    "iç mimarlık":                  ["Innenarchitektur", "Interior Architecture", "Interior Design"],
+    "oyun tasarımı":                ["Game Design", "Spieleentwicklung", "Medieninformatik"],
+    "medya tasarımı":               ["Mediendesign", "Media Design", "Kommunikationsdesign"],
+    "moda tasarımı":                ["Modedesign", "Fashion Design"],
+    "grafik tasarım":               ["Grafikdesign", "Graphic Design", "Kommunikationsdesign"],
+    "müzik":                        ["Musikwissenschaften", "Musikpädagogik", "Music"],
+    "biyoloji":                     ["Biologie", "Biology"],
+    "biyokimya":                    ["Biochemie", "Biochemistry"],
+    "eczacılık":                    ["Pharmazie", "Pharmacy"],
+    "hemşirelik":                   ["Pflegewissenschaften", "Nursing Science"],
+    "tarım":                        ["Agrarwissenschaften", "Agricultural Sciences"],
+    "gıda teknolojisi":             ["Lebensmitteltechnologie", "Food Technology"],
+    "ormancılık":                   ["Forstwissenschaften", "Forestry"],
+    "denizcilik":                   ["Nautik", "Maritime Studies", "Schiffstechnik"],
+    "havacılık":                    ["Luftfahrttechnik", "Aviation", "Luft- und Raumfahrttechnik"],
+    "nükleer mühendislik":          ["Kerntechnik", "Nuclear Engineering"],
+    "jeotermal":                    ["Geothermie", "Geothermal Energy", "Geowissenschaften"],
+    "kentsel dönüşüm":              ["Stadtplanung", "Urban Development", "Raumplanung"],
+    "coğrafi bilgi sistemleri":     ["Geoinformatik", "Geomatics", "GIS"],
+    "geomatik":                     ["Geoinformatik", "Geomatics"],
+    "yönetim bilişim sistemleri":   ["Wirtschaftsinformatik", "Management Information Systems"],
+    "bilgi teknolojileri":          ["Wirtschaftsinformatik", "Information Technology", "Informatik"],
+    "e-ticaret":                    ["E-Commerce", "Wirtschaftsinformatik", "Digital Business"],
+    "girişimcilik":                 ["Entrepreneurship", "Unternehmensgründung", "BWL"],
+    "spor yönetimi":                ["Sportmanagement", "Sport Management"],
+    "spor bilimi":                  ["Sportwissenschaften", "Sport Science"],
+    "psikoloji":                    ["Psychologie", "Psychology"],
+    "sosyal hizmet":                ["Soziale Arbeit", "Social Work"],
+    "sosyal bilimler":              ["Sozialwissenschaften", "Social Sciences"],
+    "siyaset bilimi":               ["Politikwissenschaften", "Political Science"],
+    "hukuk":                        ["Rechtswissenschaften", "Law"],
+    "tıp":                          ["Medizin", "Medicine"],
+    "diş hekimliği":                ["Zahnmedizin", "Dentistry"],
+    "veteriner":                    ["Veterinärmedizin", "Veterinary Medicine"],
+    "uluslararası ilişkiler":       ["Internationale Beziehungen", "International Relations"],
+    "avrupa çalışmaları":           ["Europastudien", "European Studies"],
+    "almanca öğretmenliği":         ["Deutsch als Fremdsprache", "DaF", "German Language"],
+    "çeviri":                       ["Übersetzungswissenschaften", "Translation Studies"],
+    "dilbilim":                     ["Linguistik", "Linguistics"],
+    "gazetecilik":                  ["Journalistik", "Journalism", "Kommunikationswissenschaften"],
+    "iletişim":                     ["Kommunikationswissenschaften", "Media and Communication"],
+    "medya":                        ["Medienwissenschaften", "Media Studies"],
+    "tasarım":                      ["Design", "Gestaltung"],
+    "endüstriyel tasarım":          ["Industriedesign", "Industrial Design"],
+    "biyoteknoloji":                ["Biotechnologie", "Biotechnology"],
+    "nanoteknoloji":                ["Nanotechnologie", "Nanotechnology", "Materialwissenschaften"],
+    # Ek İngilizce alanlar
+    "robotics":                     ["Robotik", "Robotics", "Automatisierungstechnik"],
+    "automation":                   ["Automatisierungstechnik", "Automation"],
+    "bioinformatics":               ["Bioinformatik", "Bioinformatics"],
+    "health management":            ["Gesundheitsmanagement", "Health Management"],
+    "international business":       ["Internationales Management", "International Business", "BWL"],
+    "tourism management":           ["Tourismusmanagement", "Tourism Management"],
+    "human resource management":    ["Personalmanagement", "Human Resources", "BWL"],
+    "landscape architecture":       ["Landschaftsarchitektur", "Landscape Architecture"],
+    "interior design":              ["Innenarchitektur", "Interior Architecture"],
+    "game design":                  ["Game Design", "Spieleentwicklung", "Medieninformatik"],
+    "fashion design":               ["Modedesign", "Fashion Design"],
+    "graphic design":               ["Grafikdesign", "Graphic Design"],
+    "nursing":                      ["Pflegewissenschaften", "Nursing Science"],
+    "pharmacy":                     ["Pharmazie", "Pharmacy"],
+    "agriculture":                  ["Agrarwissenschaften", "Agricultural Sciences"],
+    "forestry":                     ["Forstwissenschaften", "Forestry"],
+    "maritime":                     ["Nautik", "Maritime Studies"],
+    "geomatics":                    ["Geoinformatik", "Geomatics"],
+    "entrepreneurship":             ["Entrepreneurship", "BWL"],
+    "sports management":            ["Sportmanagement", "Sport Management"],
+    "political science":            ["Politikwissenschaften", "Political Science"],
+    "social work":                  ["Soziale Arbeit", "Social Work"],
+    "journalism":                   ["Journalistik", "Journalism"],
+    "linguistics":                  ["Linguistik", "Linguistics"],
+    "nanotechnology":               ["Nanotechnologie", "Nanotechnology"],
+    "biotechnology":                ["Biotechnologie", "Biotechnology"],
 }
 
 
@@ -464,6 +609,32 @@ def get_field_query_variants(field: str) -> list[str]:
             return variants
     # Bilinmeyen alan → orijinali kullan
     return [field]
+
+
+def _field_relevance_score(program_name: str, desired_field: str) -> float:
+    """
+    Program adının istenen alana uygunluğunu 0.0–1.0 arasında puanla.
+    Herhangi bir eşanlamlı anahtar kelime eşleşirse pozitif skor döner.
+    Skor 0 → ilgisiz program (filtrelenebilir).
+    """
+    if not program_name or not desired_field:
+        return 0.5  # bilinmiyor → filt etme
+
+    prog_lower = program_name.lower()
+    # Tüm eşanlamlı varyantları topla
+    variants = get_field_query_variants(desired_field)
+    all_keywords: list[str] = []
+    for v in variants:
+        all_keywords.extend(w.strip(".-,()") for w in v.split() if len(w.strip(".-,()")) >= 4)
+    # İstenen alandan da kelimeler ekle
+    all_keywords.extend(w for w in desired_field.lower().split() if len(w) >= 4)
+    # Deduplicate
+    kw_set = list(dict.fromkeys(kw.lower() for kw in all_keywords))
+
+    hits = sum(1 for kw in kw_set if kw in prog_lower)
+    if hits == 0:
+        return 0.0
+    return min(1.0, hits / max(3, len(kw_set) * 0.3))
 
 
 def get_field_db_keywords(field: str) -> list[str]:
@@ -613,6 +784,16 @@ async def search_programs_daad(profile) -> list[ProgramDetail]:
                     _collect({"q": q, "degree": deg_num})
                     for q in query_variants[:2]
                 ])
+
+        # — Alan ilgililik filtresi: program adı tamamen alakasızsa çıkar —
+        before = len(results)
+        results = [
+            p for p in results
+            if _field_relevance_score(p.program, profile.desired_field) > 0.0
+        ]
+        filtered_out = before - len(results)
+        if filtered_out > 0:
+            logging.info(f"Alan ilgililik filtresi: {filtered_out} alakasız program çıkarıldı")
 
         console.print(f"   ✅ DAAD'dan {len(results)} program bulundu", style="green")
 

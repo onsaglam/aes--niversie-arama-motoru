@@ -379,28 +379,16 @@ def evaluate_eligibility(profile, program: ProgramDetail) -> ProgramDetail:
 
     # ── Sonuç hesapla ─────────────────────────────────────────────────
     n_issues = len(issues)
-    student_accepts_conditional = getattr(profile, "conditional_admission", True)
 
     if n_issues == 0:
         positive_summary = _build_positive_summary(program, profile, passed)
         program.eligibility        = "uygun"
         program.eligibility_reason = positive_summary
-    elif n_issues == 1 and program.conditional_admission and student_accepts_conditional:
+    elif n_issues == 1:
         program.eligibility        = "sartli"
         program.eligibility_reason = (
-            f"Şartlı uygun — 1 eksiklik var ama şartlı kabul mevcut. "
-            f"Eksik: {issues[0]}. "
-            f"Şartlı kabul alındıktan sonra eksik karşılanırsa kabul onaylanır."
-        )
-    elif n_issues == 1:
-        reason_why_not_conditional = (
-            "Program şartlı kabul sunmuyor" if not program.conditional_admission
-            else "Öğrenci şartlı kabul istemediğini belirtmiş"
-        )
-        program.eligibility        = "uygun_degil"
-        program.eligibility_reason = (
-            f"Uygun değil ({reason_why_not_conditional}). "
-            f"Sorun: {issues[0]}"
+            f"Şartlı uygun — 1 eksiklik var, giderilebilir. "
+            f"Eksik: {issues[0]}"
         )
     else:
         program.eligibility        = "uygun_degil"

@@ -171,11 +171,12 @@ export default function StudentPage() {
   const [filter, setFilter]           = useState<string>("uygun");
   const [langFilter, setLangFilter]   = useState<"" | "de" | "en">("");
   const [degreeFilter, setDegreeFilter] = useState<"" | "master" | "bachelor">("");
-  const [minConf, setMinConf]         = useState<number>(0.0);
+  const [minConf, setMinConf]         = useState<number>(0.6);
   const [showLimit, setShowLimit]     = useState(25);
   const [showUncertain, setShowUncertain] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [fieldFilter, setFieldFilter]   = useState(false);
   const [expanded, setExpanded]   = useState<string | null>(null);
   const [deleting, setDeleting]   = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
@@ -416,6 +417,22 @@ export default function StudentPage() {
     return true;
   }
 
+  // Field relevance filter — uses profile.desired_field keywords
+  const fieldKeywords = React.useMemo(() => {
+    if (!profile?.desired_field) return [];
+    const stopwords = new Set(["için", "veya", "ile", "and", "the", "of", "for", "und", "mit"]);
+    return profile.desired_field.toLowerCase()
+      .split(/[\s,\/\-]+/)
+      .map(w => w.replace(/[()]/g, "").trim())
+      .filter(w => w.length >= 4 && !stopwords.has(w));
+  }, [profile]);
+
+  function fieldMatches(p: Program): boolean {
+    if (!fieldFilter || fieldKeywords.length === 0) return true;
+    const prog = (p.program || "").toLowerCase();
+    return fieldKeywords.some(kw => prog.includes(kw));
+  }
+
   // Search query helper
   function searchMatches(p: Program): boolean {
     if (!searchQuery.trim()) return true;
@@ -424,13 +441,19 @@ export default function StudentPage() {
   }
 
   // Sorted + filtered main list (certain results only)
+  // "uygun" tab shows both uygun + sartli together
   const sorted = [...allPrograms]
     .filter(p => CERTAIN_STATES.has(p.eligibility))
     .filter(p => p.confidence >= minConf)
     .filter(langMatches)
     .filter(degreeMatches)
+    .filter(fieldMatches)
     .filter(searchMatches)
-    .filter(p => filter === "all" || p.eligibility === filter)
+    .filter(p =>
+      filter === "all" ||
+      p.eligibility === filter ||
+      (filter === "uygun" && p.eligibility === "sartli")
+    )
     .sort((a, b) => {
       // Primary: eligibility order
       const oa = ELIGIBILITY_CONFIG[a.eligibility as keyof typeof ELIGIBILITY_CONFIG]?.order ?? 9;
@@ -448,6 +471,7 @@ export default function StudentPage() {
     .filter(p => p.confidence >= minConf)
     .filter(langMatches)
     .filter(degreeMatches)
+    .filter(fieldMatches)
     .filter(searchMatches);
 
   if (loading) return (
@@ -891,11 +915,14 @@ export default function StudentPage() {
 
             {/* Uygunluk sekmeleri */}
             <div className="flex flex-wrap gap-2">
-              {(["uygun", "sartli", "uygun_degil", "all"] as const).map((key) => {
+              {(["uygun", "uygun_degil", "all"] as const).map((key) => {
                 const isAll = key === "all";
+                // "uygun" sayısına sartli de dahil
                 const cnt   = isAll
                   ? allPrograms.filter(p => CERTAIN_STATES.has(p.eligibility)).length
-                  : (counts[key] ?? 0);
+                  : key === "uygun"
+                    ? (counts["uygun"] ?? 0) + (counts["sartli"] ?? 0)
+                    : (counts[key] ?? 0);
                 if (!cnt && !isAll) return null;
                 const cfg = isAll ? null : ELIGIBILITY_CONFIG[key];
                 return (
@@ -914,6 +941,20 @@ export default function StudentPage() {
                   </button>
                 );
               })}
+              {/* Alan filtresi */}
+              {profile?.desired_field && fieldKeywords.length > 0 && (
+                <button
+                  onClick={() => { setFieldFilter(v => !v); setShowLimit(25); }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    fieldFilter
+                      ? "bg-indigo-600 text-white"
+                      : "bg-white border border-slate-200 text-slate-500 hover:border-indigo-200"
+                  }`}
+                  title={`Sadece "${profile.desired_field}" ile ilgili programlar`}
+                >
+                  📐 {profile.desired_field.length > 22 ? profile.desired_field.slice(0, 22) + "…" : profile.desired_field}
+                </button>
+              )}
 
               {/* Derece toggle */}
               <div className="ml-auto flex gap-1">
@@ -973,10 +1014,10 @@ export default function StudentPage() {
               ))}
               <span className="ml-auto text-slate-400">
                 <span className="font-semibold text-slate-600">{sorted.length}</span> program gösteriliyor
-                {(langFilter || degreeFilter || minConf > 0 || searchQuery) && (
+                {(langFilter || degreeFilter || minConf > 0.6 || searchQuery || fieldFilter) && (
                   <button
                     className="ml-2 text-blue-500 hover:underline"
-                    onClick={() => { setLangFilter(""); setDegreeFilter(""); setMinConf(0); setSearchQuery(""); setShowLimit(25); }}
+                    onClick={() => { setLangFilter(""); setDegreeFilter(""); setMinConf(0.6); setSearchQuery(""); setFieldFilter(false); setShowLimit(25); }}
                   >
                     Sıfırla
                   </button>
