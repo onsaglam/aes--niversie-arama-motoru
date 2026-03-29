@@ -2,16 +2,14 @@ import { spawn, execFileSync } from "child_process";
 import path from "path";
 import fs from "fs";
 
-const AGENT_DIR    = path.resolve(process.cwd(), "../aes-agent");
-const STUDENTS_DIR = path.resolve(process.cwd(), "../aes-agent/ogrenciler");
-const VENV_PYTHON  = path.join(AGENT_DIR, "venv/bin/python");
+const AGENT_DIR   = path.resolve(process.cwd(), "../aes-agent");
+const VENV_PYTHON = path.join(AGENT_DIR, "venv/bin/python");
 
-/** venv python varsa onu, yoksa sistem python3/python kullan */
 function resolvePython(): string {
   if (fs.existsSync(VENV_PYTHON)) return VENV_PYTHON;
   try { execFileSync("python3", ["--version"], { stdio: "ignore" }); return "python3"; } catch { /* */ }
   try { execFileSync("python",  ["--version"], { stdio: "ignore" }); return "python";  } catch { /* */ }
-  return VENV_PYTHON; // başarısız olursa orijinali dene, hata mesajı döner
+  return VENV_PYTHON;
 }
 
 function safeName(name: string): boolean {
@@ -20,22 +18,16 @@ function safeName(name: string): boolean {
 
 export async function POST(_req: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
-  if (!safeName(name)) {
-    return new Response("Geçersiz öğrenci adı", { status: 400 });
-  }
+  if (!safeName(name)) return new Response("Geçersiz öğrenci adı", { status: 400 });
 
-  // .running kilit dosyası varsa ve 2 saatten yeni ise çift çalıştırmayı engelle
-  const runFile = path.join(STUDENTS_DIR, name, ".running");
-  if (fs.existsSync(runFile)) {
-    const ageMins = (Date.now() - fs.statSync(runFile).mtimeMs) / 60000;
-    if (ageMins < 120) {
-      return new Response("Araştırma zaten çalışıyor. Lütfen tamamlanmasını bekleyin.", {
-        status: 409,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      });
-    }
-    // Sahipsiz kilit dosyasını temizle
-    try { fs.unlinkSync(runFile); } catch { /* ignore */ }
+  // Vercel'de Python subprocess çalıştırılamaz
+  if (process.env.VERCEL) {
+    return new Response(
+      "⚠️ Ajan çalıştırma özelliği yalnızca yerel ortamda kullanılabilir.\n" +
+      "Terminalde şunu çalıştırın:\n\n" +
+      `  cd aes-agent\n  python src/agent.py --student "${name}"\n`,
+      { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } }
+    );
   }
 
   const quick  = new URL(_req.url).searchParams.get("quick") === "1";
@@ -49,13 +41,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ name: 
         const enc  = new TextEncoder();
         const proc = spawn(python, args, {
           cwd: AGENT_DIR,
-          env: {
-            ...process.env,
-            PYTHONIOENCODING: "utf-8",   // Türkçe karakter sorununu önle
-            PYTHONUNBUFFERED: "1",        // Satır satır akış için
-          },
+          env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" },
         });
-
         proc.stdout.on("data", (d: Buffer) => controller.enqueue(enc.encode(d.toString())));
         proc.stderr.on("data", (d: Buffer) => controller.enqueue(enc.encode(d.toString())));
         proc.on("close", (code) => {
@@ -68,11 +55,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ name: 
         });
       },
     }),
-    {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "X-Content-Type-Options": "nosniff",
-      },
-    }
+    { headers: { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" } }
   );
 }

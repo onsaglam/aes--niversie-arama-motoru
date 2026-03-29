@@ -1,21 +1,15 @@
 /**
- * POST /api/students/run-all
- * Profili hazır olan ama sonucu olmayan (veya eski) öğrencileri sıraya alır
- * ve ajanı sırayla çalıştırır (SSE akışı ile ilerleme bildirir).
- *
- * Query params:
- *  ?mode=stale  → sadece 7+ gündür çalışmamışları (default)
- *  ?mode=all    → araştırma sonucu olanları da dahil et
- *  ?quick=1     → her öğrenci için --quick flag
+ * POST /api/students/run-all — Tüm öğrenciler için ajanı sıraya alır (sadece local)
+ * GET  /api/students/run-all — Bekleyen öğrenci sayısını döndürür
  */
 import { NextResponse } from "next/server";
 import { spawn, execFileSync } from "child_process";
+import { sql } from "@/lib/db";
 import path from "path";
 import fs from "fs";
 
-const AGENT_DIR    = path.resolve(process.cwd(), "../aes-agent");
-const STUDENTS_DIR = path.resolve(process.cwd(), "../aes-agent/ogrenciler");
-const VENV_PYTHON  = path.join(AGENT_DIR, "venv/bin/python");
+const AGENT_DIR   = path.resolve(process.cwd(), "../aes-agent");
+const VENV_PYTHON = path.join(AGENT_DIR, "venv/bin/python");
 
 function resolvePython(): string {
   if (fs.existsSync(VENV_PYTHON)) return VENV_PYTHON;
@@ -24,56 +18,80 @@ function resolvePython(): string {
   return VENV_PYTHON;
 }
 
-function isStale(folder: string): boolean {
-  const files = fs.readdirSync(folder)
-    .filter((f) => f.startsWith("arastirma_") && f.endsWith(".json"))
-    .sort()
-    .reverse();
-  if (!files.length) return true; // hiç sonuç yok → eski sayılır
-  const stat = fs.statSync(path.join(folder, files[0]));
-  const daysSince = (Date.now() - stat.mtimeMs) / 86400000;
-  return daysSince >= 7;
+async function getStaleStudents(): Promise<string[]> {
+  // 7+ gündür çalışmamış veya hiç çalışmamış öğrenciler
+  const rows = await sql`
+    SELECT s.name
+    FROM students s
+    LEFT JOIN (
+      SELECT DISTINCT ON (student_name) student_name, run_at
+      FROM student_results
+      ORDER BY student_name, id DESC
+    ) r ON r.student_name = s.name
+    WHERE r.run_at IS NULL
+       OR r.run_at < to_char(NOW() - INTERVAL '7 days', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+  `;
+  return rows.map((r) => (r as { name: string }).name);
+}
+
+async function getAllStudents(): Promise<string[]> {
+  const rows = await sql`SELECT name FROM students ORDER BY name`;
+  return rows.map((r) => (r as { name: string }).name);
+}
+
+async function getRunningStudents(): Promise<string[]> {
+  const rows = await sql`
+    SELECT DISTINCT ON (student_name) student_name
+    FROM student_results
+    WHERE is_running = 1
+    ORDER BY student_name, id DESC
+  `;
+  return rows.map((r) => (r as { student_name: string }).student_name);
+}
+
+export async function GET() {
+  try {
+    const stale   = await getStaleStudents();
+    const running = await getRunningStudents();
+    const queue   = stale.filter((n) => !running.includes(n));
+    return NextResponse.json({ pending: queue.length, queue });
+  } catch (err) {
+    return NextResponse.json({ pending: 0, queue: [], error: String(err) });
+  }
 }
 
 export async function POST(req: Request) {
-  if (!fs.existsSync(STUDENTS_DIR)) {
-    return NextResponse.json({ error: "Öğrenci dizini bulunamadı" }, { status: 404 });
+  // Vercel'de Python subprocess çalıştırılamaz
+  if (process.env.VERCEL) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(ctrl) {
+        ctrl.enqueue(encoder.encode(
+          `data: ${JSON.stringify({ type: "error", message: "Ajan çalıştırma özelliği yalnızca yerel ortamda kullanılabilir. Terminalde: cd aes-agent && python src/agent.py --all" })}\n\n`
+        ));
+        ctrl.close();
+      },
+    });
+    return new Response(stream, {
+      headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache" },
+    });
   }
 
   const url   = new URL(req.url);
   const mode  = url.searchParams.get("mode") ?? "stale";
   const quick = url.searchParams.get("quick") === "1";
 
-  // Öğrenci listesini belirle
-  const allFolders = fs.readdirSync(STUDENTS_DIR)
-    .filter((f) => fs.statSync(path.join(STUDENTS_DIR, f)).isDirectory());
-
-  const queue = allFolders.filter((name) => {
-    const folder = path.join(STUDENTS_DIR, name);
-    // Profil.docx yoksa atla
-    if (!fs.existsSync(path.join(folder, "profil.docx"))) return false;
-    // .running kilidi varsa atla
-    const runFile = path.join(folder, ".running");
-    if (fs.existsSync(runFile)) {
-      const ageMins = (Date.now() - fs.statSync(runFile).mtimeMs) / 60000;
-      if (ageMins < 120) return false;
-    }
-    if (mode === "all") return true;
-    return isStale(folder); // mode=stale
-  });
+  const running = await getRunningStudents();
+  const allNames = mode === "all" ? await getAllStudents() : await getStaleStudents();
+  const queue = allNames.filter((n) => !running.includes(n));
 
   if (queue.length === 0) {
     return NextResponse.json({ message: "Çalıştırılacak öğrenci yok", queue: [] });
   }
 
-  const python = resolvePython();
-
-  // SSE stream: her öğrenci için satır satır log aktar
+  const python  = resolvePython();
   const encoder = new TextEncoder();
-
-  function sse(data: object) {
-    return encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
-  }
+  function sse(data: object) { return encoder.encode(`data: ${JSON.stringify(data)}\n\n`); }
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -91,20 +109,10 @@ export async function POST(req: Request) {
             cwd: AGENT_DIR,
             env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" },
           });
-
-          proc.stdout.on("data", (d: Buffer) => {
-            controller.enqueue(sse({ type: "log", name, text: d.toString() }));
-          });
-          proc.stderr.on("data", (d: Buffer) => {
-            controller.enqueue(sse({ type: "log", name, text: d.toString() }));
-          });
+          proc.stdout.on("data", (d: Buffer) => controller.enqueue(sse({ type: "log", name, text: d.toString() })));
+          proc.stderr.on("data", (d: Buffer) => controller.enqueue(sse({ type: "log", name, text: d.toString() })));
           proc.on("close", (code) => {
-            controller.enqueue(sse({
-              type: "student_done",
-              name,
-              exitCode: code,
-              success: code === 0,
-            }));
+            controller.enqueue(sse({ type: "student_done", name, exitCode: code, success: code === 0 }));
             resolve();
           });
           proc.on("error", (err) => {
@@ -120,31 +128,6 @@ export async function POST(req: Request) {
   });
 
   return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache",
-      "X-Accel-Buffering": "no",
-    },
+    headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", "X-Accel-Buffering": "no" },
   });
-}
-
-/** GET /api/students/run-all → sıradaki öğrenci sayısını döndür */
-export async function GET() {
-  if (!fs.existsSync(STUDENTS_DIR)) return NextResponse.json({ pending: 0, queue: [] });
-
-  const allFolders = fs.readdirSync(STUDENTS_DIR)
-    .filter((f) => fs.statSync(path.join(STUDENTS_DIR, f)).isDirectory());
-
-  const queue = allFolders.filter((name) => {
-    const folder = path.join(STUDENTS_DIR, name);
-    if (!fs.existsSync(path.join(folder, "profil.docx"))) return false;
-    const runFile = path.join(folder, ".running");
-    if (fs.existsSync(runFile)) {
-      const ageMins = (Date.now() - fs.statSync(runFile).mtimeMs) / 60000;
-      if (ageMins < 120) return false;
-    }
-    return isStale(folder);
-  });
-
-  return NextResponse.json({ pending: queue.length, queue });
 }

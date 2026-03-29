@@ -1,33 +1,24 @@
 import { NextResponse } from "next/server";
-import path from "path";
-import Database from "better-sqlite3";
-import fs from "fs";
 import Anthropic from "@anthropic-ai/sdk";
-
-const DB_PATH = path.resolve(process.cwd(), "../aes-agent/programs.db");
-
-function getDb() {
-  if (!fs.existsSync(DB_PATH)) return null;
-  return new Database(DB_PATH, { readonly: true });
-}
+import { sql } from "@/lib/db";
 
 // Basit in-memory cache — 6 saatte bir yenile
 let _cache: { ts: number; data: HighlightResult } | null = null;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 export interface HighlightItem {
-  title:       string;
-  university:  string;
-  program:     string;
-  city?:       string;
-  url?:        string;
-  deadline?:   string;
-  reason:      string;
+  title:      string;
+  university: string;
+  program:    string;
+  city?:      string;
+  url?:       string;
+  deadline?:  string;
+  reason:     string;
 }
 
 export interface HighlightSection {
-  category:    string;  // örn: "Deadline Yaklaşıyor"
-  icon:        string;  // emoji
+  category:    string;
+  icon:        string;
   description: string;
   items:       HighlightItem[];
 }
@@ -38,102 +29,92 @@ export interface HighlightResult {
   generated_at: string;
 }
 
-// ── GET: AI Önerileri ─────────────────────────────────────────────────────
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const forceRefresh = searchParams.get("refresh") === "1";
 
-  // Cache geçerliyse döndür
   if (!forceRefresh && _cache && Date.now() - _cache.ts < CACHE_TTL_MS) {
     return NextResponse.json(_cache.data);
   }
 
-  const db = getDb();
-  if (!db) {
-    return NextResponse.json({ sections: [], summary: "Veritabanı bulunamadı.", generated_at: new Date().toISOString() });
-  }
-
-  // ── DB'den özet veri topla ──────────────────────────────────────────────
   let dbData: string;
   try {
-    // 1. Yaklaşan deadline'lar (bugünden 60 gün içinde)
-    const upcomingDeadlines = db.prepare(`
-      SELECT university, program, city, url,
-             deadline_wise, deadline_sose, language, degree,
-             conditional_admission, nc_value
-      FROM programs
-      WHERE (
-        (deadline_wise IS NOT NULL AND deadline_wise != ''
-          AND substr(deadline_wise,7,4) || '-' || substr(deadline_wise,4,2) || '-' || substr(deadline_wise,1,2)
-              BETWEEN date('now') AND date('now', '+60 days'))
-        OR
-        (deadline_sose IS NOT NULL AND deadline_sose != ''
-          AND substr(deadline_sose,7,4) || '-' || substr(deadline_sose,4,2) || '-' || substr(deadline_sose,1,2)
-              BETWEEN date('now') AND date('now', '+60 days'))
-      )
-      ORDER BY deadline_wise, deadline_sose
-      LIMIT 15
-    `).all() as Record<string, string>[];
-
-    // 2. İngilizce + Dil şartsız programlar
-    const easyEnglish = db.prepare(`
-      SELECT university, program, city, url, degree, deadline_wise, deadline_sose,
-             english_requirement, nc_value, conditional_admission
-      FROM programs
-      WHERE (lower(language) LIKE '%english%' OR lower(language) LIKE '%ingilizce%')
-        AND (english_requirement IS NULL OR english_requirement = '')
-        AND (nc_value IS NULL OR lower(nc_value) = 'zulassungsfrei' OR nc_value = '')
-      ORDER BY confidence DESC
-      LIMIT 12
-    `).all() as Record<string, string>[];
-
-    // 3. NC'siz (zulassungsfrei) Almanca programlar
-    const ncFree = db.prepare(`
-      SELECT university, program, city, url, degree, deadline_wise, deadline_sose,
-             german_requirement, conditional_admission, confidence
-      FROM programs
-      WHERE (lower(nc_value) = 'zulassungsfrei' OR nc_value IS NULL OR nc_value = '')
-        AND (lower(language) LIKE '%almanca%' OR lower(language) LIKE '%german%' OR lower(language) LIKE '%deutsch%')
-        AND german_requirement IS NOT NULL AND german_requirement != ''
-      ORDER BY confidence DESC
-      LIMIT 12
-    `).all() as Record<string, string>[];
-
-    // 4. Şartlı kabul sunan, dolayısıyla erişimi kolay programlar
-    const conditional = db.prepare(`
-      SELECT university, program, city, url, degree, language, deadline_wise, deadline_sose,
-             german_requirement, english_requirement, nc_value
-      FROM programs
-      WHERE conditional_admission = 1
-        AND (deadline_wise IS NOT NULL OR deadline_sose IS NOT NULL)
-      ORDER BY confidence DESC
-      LIMIT 12
-    `).all() as Record<string, string>[];
-
-    // 5. Genel istatistikler
-    const stats = db.prepare(`
-      SELECT
-        COUNT(*) as total,
-        COUNT(DISTINCT university) as uni_count,
-        SUM(CASE WHEN lower(language) LIKE '%english%' OR lower(language) LIKE '%ingilizce%' THEN 1 ELSE 0 END) as english_count,
-        SUM(CASE WHEN lower(language) LIKE '%almanca%' OR lower(language) LIKE '%german%' THEN 1 ELSE 0 END) as german_count,
-        SUM(CASE WHEN conditional_admission = 1 THEN 1 ELSE 0 END) as conditional_count,
-        SUM(CASE WHEN lower(nc_value) = 'zulassungsfrei' OR nc_value IS NULL THEN 1 ELSE 0 END) as nc_free_count
-      FROM programs
-    `).get() as Record<string, number>;
+    // Postgres: DD.MM.YYYY → date dönüşümü için regex check
+    const [upcomingDeadlines, easyEnglish, ncFree, conditional, stats] = await Promise.all([
+      sql`
+        SELECT university, program, city, url,
+               deadline_wise, deadline_sose, language, degree,
+               conditional_admission, nc_value
+        FROM programs
+        WHERE (
+          (deadline_wise IS NOT NULL AND deadline_wise != ''
+            AND CASE WHEN deadline_wise ~ E'^\\d{2}\\.\\d{2}\\.\\d{4}$'
+                     THEN to_date(deadline_wise, 'DD.MM.YYYY')
+                     ELSE NULL END
+                BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '60 days')
+          OR
+          (deadline_sose IS NOT NULL AND deadline_sose != ''
+            AND CASE WHEN deadline_sose ~ E'^\\d{2}\\.\\d{2}\\.\\d{4}$'
+                     THEN to_date(deadline_sose, 'DD.MM.YYYY')
+                     ELSE NULL END
+                BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '60 days')
+        )
+        ORDER BY deadline_wise, deadline_sose
+        LIMIT 15
+      `,
+      sql`
+        SELECT university, program, city, url, degree, deadline_wise, deadline_sose,
+               english_requirement, nc_value, conditional_admission
+        FROM programs
+        WHERE (lower(language) LIKE '%english%' OR lower(language) LIKE '%ingilizce%')
+          AND (english_requirement IS NULL OR english_requirement = '')
+          AND (nc_value IS NULL OR lower(nc_value) = 'zulassungsfrei' OR nc_value = '')
+        ORDER BY confidence DESC
+        LIMIT 12
+      `,
+      sql`
+        SELECT university, program, city, url, degree, deadline_wise, deadline_sose,
+               german_requirement, conditional_admission, confidence
+        FROM programs
+        WHERE (lower(nc_value) = 'zulassungsfrei' OR nc_value IS NULL OR nc_value = '')
+          AND (lower(language) LIKE '%almanca%' OR lower(language) LIKE '%german%' OR lower(language) LIKE '%deutsch%')
+          AND german_requirement IS NOT NULL AND german_requirement != ''
+        ORDER BY confidence DESC
+        LIMIT 12
+      `,
+      sql`
+        SELECT university, program, city, url, degree, language, deadline_wise, deadline_sose,
+               german_requirement, english_requirement, nc_value
+        FROM programs
+        WHERE conditional_admission = 1
+          AND (deadline_wise IS NOT NULL OR deadline_sose IS NOT NULL)
+        ORDER BY confidence DESC
+        LIMIT 12
+      `,
+      sql`
+        SELECT
+          COUNT(*) as total,
+          COUNT(DISTINCT university) as uni_count,
+          SUM(CASE WHEN lower(language) LIKE '%english%' OR lower(language) LIKE '%ingilizce%' THEN 1 ELSE 0 END) as english_count,
+          SUM(CASE WHEN lower(language) LIKE '%almanca%' OR lower(language) LIKE '%german%' THEN 1 ELSE 0 END) as german_count,
+          SUM(CASE WHEN conditional_admission = 1 THEN 1 ELSE 0 END) as conditional_count,
+          SUM(CASE WHEN lower(nc_value) = 'zulassungsfrei' OR nc_value IS NULL THEN 1 ELSE 0 END) as nc_free_count
+        FROM programs
+      `,
+    ]);
 
     dbData = JSON.stringify({
-      stats,
-      upcoming_deadlines:  upcomingDeadlines.slice(0, 10),
-      easy_english_programs: easyEnglish.slice(0, 8),
-      nc_free_german:      ncFree.slice(0, 8),
-      conditional_programs: conditional.slice(0, 8),
+      stats:                   stats[0] ?? {},
+      upcoming_deadlines:      upcomingDeadlines.slice(0, 10),
+      easy_english_programs:   easyEnglish.slice(0, 8),
+      nc_free_german:          ncFree.slice(0, 8),
+      conditional_programs:    conditional.slice(0, 8),
     }, null, 2);
-  } finally {
-    db.close();
+  } catch (err) {
+    console.error("[highlights DB]", err);
+    return NextResponse.json({ sections: [], summary: "Veritabanı hatası.", generated_at: new Date().toISOString() }, { status: 500 });
   }
 
-  // ── Claude çağrısı ────────────────────────────────────────────────────────
   const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
   if (!apiKey || apiKey.includes("BURAYA_YAZ")) {
     return NextResponse.json(
@@ -188,22 +169,16 @@ Her item için gerçek veritabanı verisi kullan, tahmin etme.`;
       messages:   [{ role: "user", content: prompt }],
     });
 
-    const raw = (message.content[0] as { text: string }).text.trim();
+    const raw   = (message.content[0] as { text: string }).text.trim();
     const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) {
-      throw new Error("Claude JSON döndürmedi");
-    }
+    if (!match) throw new Error("Claude JSON döndürmedi");
 
     const parsed = JSON.parse(match[0]) as Omit<HighlightResult, "generated_at">;
-    const result: HighlightResult = {
-      ...parsed,
-      generated_at: new Date().toISOString(),
-    };
-
+    const result: HighlightResult = { ...parsed, generated_at: new Date().toISOString() };
     _cache = { ts: Date.now(), data: result };
     return NextResponse.json(result);
   } catch (err) {
-    console.error("Highlights Claude hatası:", err);
+    console.error("[highlights Claude]", err);
     return NextResponse.json(
       { sections: [], summary: "AI analizi şu an kullanılamıyor.", generated_at: new Date().toISOString() },
       { status: 500 }

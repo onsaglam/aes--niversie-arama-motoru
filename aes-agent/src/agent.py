@@ -36,7 +36,7 @@ from searcher import search, search_mastersportal, search_forums
 from scraper  import fetch_page
 from parser   import extract_program_data, extract_from_pdf, evaluate_eligibility, ProgramDetail
 from reporter import generate_word_report, generate_excel_report
-from database import ProgramDatabase
+from database import ProgramDatabase, neon_set_running, neon_save_results, neon_clear_running
 try:
     from notifier import send_completion_email
     NOTIFIER_OK = True
@@ -1604,6 +1604,7 @@ async def run_agent(student_folder: str, quick: bool = False):
     # Çalışıyor kilidi — dashboard'un durumu görmesi için
     lock_file = folder / ".running"
     lock_file.write_text(datetime.now().isoformat())
+    neon_set_running(student_folder)
 
     try:
         await _run_agent_inner(student_folder, folder, quick)
@@ -1612,6 +1613,7 @@ async def run_agent(student_folder: str, quick: bool = False):
             lock_file.unlink(missing_ok=True)
         except Exception:
             pass
+        neon_clear_running(student_folder)
 
 
 async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
@@ -1757,28 +1759,32 @@ async def _run_agent_inner(student_folder: str, folder: Path, quick: bool):
 
     # Log kaydet
     log_file = folder / f"arastirma_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+    results_list = [{
+        "university":           p.university,
+        "program":              p.program,
+        "city":                 p.city,
+        "language":             p.language,
+        "degree":               p.degree,
+        "eligibility":          p.eligibility,
+        "eligibility_reason":   p.eligibility_reason,
+        "issues":               p.issues,
+        "passed_checks":        p.passed_checks,
+        "deadline_wise":        p.deadline_wise,
+        "deadline_sose":        p.deadline_sose,
+        "german_requirement":   p.german_requirement,
+        "english_requirement":  p.english_requirement,
+        "nc_value":             p.nc_value,
+        "uni_assist_required":  p.uni_assist_required,
+        "conditional_admission":p.conditional_admission,
+        "confidence":           round(p.confidence, 2),
+        "url":                  p.url,
+        "notes":                p.notes or None,
+    } for p in final_programs]
     with open(log_file, "w", encoding="utf-8") as f:
-        json.dump([{
-            "university":           p.university,
-            "program":              p.program,
-            "city":                 p.city,
-            "language":             p.language,
-            "degree":               p.degree,
-            "eligibility":          p.eligibility,
-            "eligibility_reason":   p.eligibility_reason,
-            "issues":               p.issues,
-            "passed_checks":        p.passed_checks,
-            "deadline_wise":        p.deadline_wise,
-            "deadline_sose":        p.deadline_sose,
-            "german_requirement":   p.german_requirement,
-            "english_requirement":  p.english_requirement,
-            "nc_value":             p.nc_value,
-            "uni_assist_required":  p.uni_assist_required,
-            "conditional_admission":p.conditional_admission,
-            "confidence":           round(p.confidence, 2),
-            "url":                  p.url,
-            "notes":                p.notes or None,
-        } for p in final_programs], f, ensure_ascii=False, indent=2)
+        json.dump(results_list, f, ensure_ascii=False, indent=2)
+
+    # Neon'a sonuçları kaydet
+    neon_save_results(student_folder, results_list)
 
     # ── 6. Email bildirimi ─────────────────────────────────────────────
     if NOTIFIER_OK:

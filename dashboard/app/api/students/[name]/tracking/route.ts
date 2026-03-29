@@ -1,55 +1,26 @@
 /**
- * Başvuru takip sistemi — öğrenci başına program durumu izleme
- * GET  /api/students/[name]/tracking       → tracking.json döndür
- * POST /api/students/[name]/tracking       → { university, program, status } → güncelle
- * DELETE /api/students/[name]/tracking     → { university, program } → kaydı sil
- *
- * Durumlar: "inceleniyor" | "basvurulacak" | "basvuruldu" | "kabul" | "red" | "beklemede"
+ * Başvuru takip sistemi — Neon student_tracking tablosu
+ * GET    /api/students/[name]/tracking
+ * POST   /api/students/[name]/tracking  → { university, program, status, notes }
+ * DELETE /api/students/[name]/tracking  → { university, program }
  */
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
-
-const STUDENTS_DIR = path.resolve(process.cwd(), "../aes-agent/ogrenciler");
+import { sql } from "@/lib/db";
 
 type TrackingStatus = "inceleniyor" | "basvurulacak" | "basvuruldu" | "kabul" | "red" | "beklemede";
-
-interface TrackingEntry {
-  university: string;
-  program: string;
-  status: TrackingStatus;
-  notes: string;
-  updated_at: string;
-}
-
-function trackingPath(name: string): string {
-  return path.join(STUDENTS_DIR, name, "tracking.json");
-}
-
-function readTracking(name: string): TrackingEntry[] {
-  const p = trackingPath(name);
-  if (!fs.existsSync(p)) return [];
-  try {
-    return JSON.parse(fs.readFileSync(p, "utf-8")) as TrackingEntry[];
-  } catch {
-    return [];
-  }
-}
-
-function writeTracking(name: string, entries: TrackingEntry[]) {
-  fs.writeFileSync(trackingPath(name), JSON.stringify(entries, null, 2), "utf-8");
-}
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ name: string }> }
 ) {
   const { name } = await params;
-  const folder = path.join(STUDENTS_DIR, name);
-  if (!fs.existsSync(folder)) {
-    return NextResponse.json({ error: "Öğrenci bulunamadı" }, { status: 404 });
-  }
-  return NextResponse.json(readTracking(name));
+  const rows = await sql`
+    SELECT university, program, status, notes, updated_at
+    FROM student_tracking
+    WHERE student_name = ${name}
+    ORDER BY updated_at DESC
+  `;
+  return NextResponse.json(rows);
 }
 
 export async function POST(
@@ -57,42 +28,26 @@ export async function POST(
   { params }: { params: Promise<{ name: string }> }
 ) {
   const { name } = await params;
-  const folder = path.join(STUDENTS_DIR, name);
-  if (!fs.existsSync(folder)) {
-    return NextResponse.json({ error: "Öğrenci bulunamadı" }, { status: 404 });
-  }
-
   const { university, program, status, notes = "" } = await req.json() as {
-    university: string;
-    program: string;
-    status: TrackingStatus;
-    notes?: string;
+    university: string; program: string; status: TrackingStatus; notes?: string;
   };
 
   if (!university || !program || !status) {
     return NextResponse.json({ error: "university, program, status zorunlu" }, { status: 400 });
   }
 
-  const entries = readTracking(name);
-  const key = (u: string, p: string) => `${u.toLowerCase()}::${p.toLowerCase().slice(0, 40)}`;
-  const idx = entries.findIndex((e) => key(e.university, e.program) === key(university, program));
+  const now = new Date().toISOString();
 
-  const entry: TrackingEntry = {
-    university,
-    program,
-    status,
-    notes,
-    updated_at: new Date().toISOString(),
-  };
+  await sql`
+    INSERT INTO student_tracking (student_name, university, program, status, notes, updated_at)
+    VALUES (${name}, ${university}, ${program}, ${status}, ${notes}, ${now})
+    ON CONFLICT (student_name, university, program) DO UPDATE
+      SET status     = EXCLUDED.status,
+          notes      = EXCLUDED.notes,
+          updated_at = EXCLUDED.updated_at
+  `;
 
-  if (idx >= 0) {
-    entries[idx] = entry;
-  } else {
-    entries.push(entry);
-  }
-
-  writeTracking(name, entries);
-  return NextResponse.json({ ok: true, entry });
+  return NextResponse.json({ ok: true, entry: { university, program, status, notes, updated_at: now } });
 }
 
 export async function DELETE(
@@ -102,9 +57,11 @@ export async function DELETE(
   const { name } = await params;
   const { university, program } = await req.json() as { university: string; program: string };
 
-  const entries = readTracking(name);
-  const key = (u: string, p: string) => `${u.toLowerCase()}::${p.toLowerCase().slice(0, 40)}`;
-  const filtered = entries.filter((e) => key(e.university, e.program) !== key(university, program));
-  writeTracking(name, filtered);
+  await sql`
+    DELETE FROM student_tracking
+    WHERE student_name = ${name}
+      AND lower(university) = lower(${university})
+      AND lower(substring(program, 1, 40)) = lower(substring(${program}, 1, 40))
+  `;
   return NextResponse.json({ ok: true });
 }

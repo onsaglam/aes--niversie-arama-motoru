@@ -1,11 +1,14 @@
 """
-database.py — AES Program Veritabanı (SQLite)
+database.py — AES Program Veritabanı (SQLite + Neon Postgres)
 
 Her tarama sonucu programs.db'ye kaydedilir.
+DATABASE_URL ortam değişkeni varsa Neon Postgres'e de dual-write yapılır.
 Aynı URL 30 gün içinde tekrar istenirse scraping atlanır → token & zaman tasarrufu.
 """
 import hashlib
+import json
 import logging
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -330,3 +333,154 @@ class ProgramDatabase:
                     updated_at            = excluded.updated_at
             """, record)
         logger.debug(f"DB saved: {data.get('university')} — {data.get('program')}")
+        # Neon'a da yaz (DATABASE_URL varsa)
+        _neon_save_program(record)
+
+    # ── Neon Postgres ────────────────────────────────────────────────────────────
+
+    def vacuum(self):
+        """SQLite VACUUM — disk alanını geri kazanır."""
+        with self._conn() as conn:
+            conn.execute("VACUUM")
+
+
+# ─── Neon Yardımcı Fonksiyonlar ───────────────────────────────────────────────
+
+def _neon_conn():
+    """Neon Postgres bağlantısı döndür. DATABASE_URL yoksa None."""
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url:
+        return None
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url)
+        conn.autocommit = True
+        return conn
+    except Exception as e:
+        logger.warning(f"Neon bağlantı hatası: {e}")
+        return None
+
+
+def _neon_save_program(record: dict) -> None:
+    """Programı Neon programs tablosuna upsert yap."""
+    conn = _neon_conn()
+    if conn is None:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO programs
+                (id, university, program, city, language, degree,
+                 deadline_wise, deadline_sose,
+                 german_requirement, english_requirement,
+                 nc_value, min_gpa, uni_assist, conditional_admission,
+                 url, source, confidence, last_scraped, updated_at)
+            VALUES
+                (%(id)s, %(university)s, %(program)s, %(city)s, %(language)s, %(degree)s,
+                 %(deadline_wise)s, %(deadline_sose)s,
+                 %(german_requirement)s, %(english_requirement)s,
+                 %(nc_value)s, %(min_gpa)s, %(uni_assist)s, %(conditional_admission)s,
+                 %(url)s, %(source)s, %(confidence)s, %(last_scraped)s, %(updated_at)s)
+            ON CONFLICT(id) DO UPDATE SET
+                university            = EXCLUDED.university,
+                program               = EXCLUDED.program,
+                city                  = EXCLUDED.city,
+                language              = EXCLUDED.language,
+                degree                = EXCLUDED.degree,
+                deadline_wise         = EXCLUDED.deadline_wise,
+                deadline_sose         = EXCLUDED.deadline_sose,
+                german_requirement    = EXCLUDED.german_requirement,
+                english_requirement   = EXCLUDED.english_requirement,
+                nc_value              = EXCLUDED.nc_value,
+                min_gpa               = EXCLUDED.min_gpa,
+                uni_assist            = EXCLUDED.uni_assist,
+                conditional_admission = EXCLUDED.conditional_admission,
+                url                   = EXCLUDED.url,
+                source                = EXCLUDED.source,
+                confidence            = EXCLUDED.confidence,
+                last_scraped          = EXCLUDED.last_scraped,
+                updated_at            = EXCLUDED.updated_at
+        """, record)
+        logger.debug(f"Neon saved: {record.get('university')} — {record.get('program')}")
+    except Exception as e:
+        logger.warning(f"Neon program kayıt hatası: {e}")
+    finally:
+        conn.close()
+
+
+def neon_set_running(student_name: str) -> None:
+    """Öğrenci için is_running=1 kaydı oluştur/güncelle (agent başladığında çağrılır)."""
+    conn = _neon_conn()
+    if conn is None:
+        return
+    now = datetime.now().isoformat() + "Z"
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO student_results (student_name, run_at, results, is_running)
+            VALUES (%s, %s, %s::jsonb, 1)
+            ON CONFLICT DO NOTHING
+        """, (student_name, now, "[]"))
+        # Varolan en son kaydı running olarak işaretle
+        cur.execute("""
+            UPDATE student_results
+            SET is_running = 1, run_at = %s
+            WHERE id = (
+                SELECT id FROM student_results
+                WHERE student_name = %s
+                ORDER BY id DESC LIMIT 1
+            )
+        """, (now, student_name))
+    except Exception as e:
+        logger.warning(f"Neon set_running hatası ({student_name}): {e}")
+    finally:
+        conn.close()
+
+
+def neon_save_results(student_name: str, results: list) -> None:
+    """Araştırma sonuçlarını Neon student_results tablosuna kaydet."""
+    conn = _neon_conn()
+    if conn is None:
+        return
+    now = datetime.now().isoformat() + "Z"
+    results_json = json.dumps(results, ensure_ascii=False)
+    try:
+        cur = conn.cursor()
+        # Varolan running kaydını güncelle; yoksa yeni ekle
+        cur.execute("""
+            UPDATE student_results
+            SET results = %s::jsonb, is_running = 0, run_at = %s
+            WHERE id = (
+                SELECT id FROM student_results
+                WHERE student_name = %s
+                ORDER BY id DESC LIMIT 1
+            )
+        """, (results_json, now, student_name))
+        if cur.rowcount == 0:
+            cur.execute("""
+                INSERT INTO student_results (student_name, run_at, results, is_running)
+                VALUES (%s, %s, %s::jsonb, 0)
+            """, (student_name, now, results_json))
+        logger.info(f"Neon student_results kaydedildi: {student_name} ({len(results)} program)")
+    except Exception as e:
+        logger.warning(f"Neon save_results hatası ({student_name}): {e}")
+    finally:
+        conn.close()
+
+
+def neon_clear_running(student_name: str) -> None:
+    """is_running bayrağını temizle (agent tamamlandığında / hata durumunda)."""
+    conn = _neon_conn()
+    if conn is None:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE student_results
+            SET is_running = 0
+            WHERE student_name = %s AND is_running = 1
+        """, (student_name,))
+    except Exception as e:
+        logger.warning(f"Neon clear_running hatası ({student_name}): {e}")
+    finally:
+        conn.close()

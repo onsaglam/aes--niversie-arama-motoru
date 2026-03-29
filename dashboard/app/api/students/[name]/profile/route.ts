@@ -1,12 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import { sql } from "@/lib/db";
 
-const STUDENTS_DIR = path.resolve(process.cwd(), "../aes-agent/ogrenciler");
-
-/** Klasör adının üst dizine çıkmadığını doğrula */
 function safeName(name: string): boolean {
   return /^[\w\-çÇğĞıİöÖşŞüÜ][\w\s\-çÇğĞıİöÖşŞüÜ]{0,60}$/.test(name) && !name.includes("..");
+}
+
+function emptyProfile(name: string) {
+  return {
+    name:                  name.replace(/_/g, " "),
+    nationality:           "Türk",
+    current_university:    "",
+    department:            "",
+    gpa_turkish:           "",
+    graduation_date:       "",
+    diploma_status:        "",
+    german_level:          "",
+    english_level:         "",
+    desired_field:         "",
+    degree_type:           "Master",
+    program_language:      "",
+    preferred_cities:      "",
+    start_semester:        "",
+    free_tuition_important: true,
+    university_type:       "",
+    accept_nc:             true,
+    conditional_admission: true,
+    advisor_notes:         "",
+  };
 }
 
 export async function GET(
@@ -15,15 +35,12 @@ export async function GET(
 ) {
   const { name } = await params;
   if (!safeName(name)) return NextResponse.json({ error: "Geçersiz öğrenci adı" }, { status: 400 });
-  const profilePath = path.join(STUDENTS_DIR, name, "profil.json");
 
-  if (!fs.existsSync(profilePath)) {
-    // Boş şablon döndür
-    return NextResponse.json(getEmptyProfile(name));
-  }
+  const rows = await sql`SELECT profile FROM students WHERE name = ${name}`;
+  if (rows.length === 0) return NextResponse.json(emptyProfile(name));
 
-  const data = JSON.parse(fs.readFileSync(profilePath, "utf-8"));
-  return NextResponse.json(data);
+  const profile = (rows[0] as { profile: Record<string, unknown> }).profile;
+  return NextResponse.json(profile && Object.keys(profile).length > 0 ? profile : emptyProfile(name));
 }
 
 export async function POST(
@@ -32,39 +49,16 @@ export async function POST(
 ) {
   const { name } = await params;
   if (!safeName(name)) return NextResponse.json({ error: "Geçersiz öğrenci adı" }, { status: 400 });
-  const studentDir = path.join(STUDENTS_DIR, name);
-
-  if (!fs.existsSync(studentDir)) {
-    fs.mkdirSync(studentDir, { recursive: true });
-  }
 
   const body = await req.json();
-  const profilePath = path.join(studentDir, "profil.json");
-  fs.writeFileSync(profilePath, JSON.stringify(body, null, 2), "utf-8");
+
+  await sql`
+    INSERT INTO students (name, profile, updated_at)
+    VALUES (${name}, ${JSON.stringify(body)}, to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+    ON CONFLICT (name) DO UPDATE
+      SET profile    = EXCLUDED.profile,
+          updated_at = EXCLUDED.updated_at
+  `;
 
   return NextResponse.json({ ok: true });
-}
-
-function getEmptyProfile(name: string) {
-  return {
-    name: name.replace(/_/g, " "),
-    nationality: "Türk",
-    current_university: "",
-    department: "",
-    gpa_turkish: "",
-    graduation_date: "",
-    diploma_status: "",
-    german_level: "",
-    english_level: "",
-    desired_field: "",
-    degree_type: "Master",
-    program_language: "",
-    preferred_cities: "",
-    start_semester: "",
-    free_tuition_important: true,
-    university_type: "",
-    accept_nc: true,
-    conditional_admission: true,
-    advisor_notes: "",
-  };
 }

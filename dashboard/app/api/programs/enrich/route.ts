@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 import path from "path";
-import Database from "better-sqlite3";
 import fs from "fs";
 import { spawn } from "child_process";
+import { sql } from "@/lib/db";
 
-const DB_PATH    = path.resolve(process.cwd(), "../aes-agent/programs.db");
-const AGENT_DIR  = path.resolve(process.cwd(), "../aes-agent");
-const SCRIPT     = path.join(AGENT_DIR, "enrich_db.py");
+const AGENT_DIR = path.resolve(process.cwd(), "../aes-agent");
+const SCRIPT    = path.join(AGENT_DIR, "enrich_db.py");
 
-// Python yolunu sırayla dene
 function findPython(): string {
   const candidates = [
     path.join(AGENT_DIR, "venv", "bin", "python3"),
@@ -23,20 +21,10 @@ function findPython(): string {
   return "python3";
 }
 
-function getDb() {
-  if (!fs.existsSync(DB_PATH)) return null;
-  return new Database(DB_PATH, { readonly: true });
-}
-
-// ── GET: Zenginleştirme istatistikleri ─────────────────────────────────────
+// ── GET: Zenginleştirme istatistikleri ──────────────────────────────────────
 export async function GET() {
-  const db = getDb();
-  if (!db) {
-    return NextResponse.json({ needs_stage1: 0, needs_stage2: 0, total: 0 });
-  }
-
   try {
-    const row = db.prepare(`
+    const rows = await sql`
       SELECT
         SUM(CASE WHEN url IS NULL OR url = '' THEN 1 ELSE 0 END) AS needs_stage1,
         SUM(
@@ -52,22 +40,31 @@ export async function GET() {
         ) AS needs_stage2,
         COUNT(*) AS total
       FROM programs
-    `).get() as { needs_stage1: number; needs_stage2: number; total: number };
-
+    `;
+    const row = (rows as Record<string, unknown>[])[0] ?? {};
     return NextResponse.json({
-      needs_stage1: row.needs_stage1 ?? 0,
-      needs_stage2: row.needs_stage2 ?? 0,
-      total:        row.total        ?? 0,
+      needs_stage1: parseInt(String(row.needs_stage1 ?? 0)),
+      needs_stage2: parseInt(String(row.needs_stage2 ?? 0)),
+      total:        parseInt(String(row.total ?? 0)),
     });
-  } finally {
-    db.close();
+  } catch (err) {
+    console.error("[enrich GET]", err);
+    return NextResponse.json({ needs_stage1: 0, needs_stage2: 0, total: 0 });
   }
 }
 
-// ── POST: Enrichment başlat ─────────────────────────────────────────────────
+// ── POST: Enrichment başlat (sadece local ortamda) ──────────────────────────
 export async function POST(req: Request) {
+  // Vercel'de Python subprocess çalıştırılamaz
+  if (process.env.VERCEL) {
+    return NextResponse.json(
+      { success: false, error: "Bu özellik yalnızca yerel ortamda kullanılabilir. Terminalde çalıştırın: cd aes-agent && python enrich_db.py" },
+      { status: 503 }
+    );
+  }
+
   const body  = await req.json().catch(() => ({})) as Record<string, unknown>;
-  const stage = (body.stage as string) ?? "all";   // "1" | "2" | "all"
+  const stage = (body.stage as string) ?? "all";
   const batch = Number(body.batch ?? 20);
 
   if (!fs.existsSync(SCRIPT)) {
@@ -78,59 +75,30 @@ export async function POST(req: Request) {
   }
 
   const args: string[] = [SCRIPT];
-  if (stage === "all") {
-    args.push("--all");
-  } else {
-    args.push("--stage", stage);
-  }
+  if (stage === "all") args.push("--all");
+  else args.push("--stage", stage);
   args.push("--batch", String(batch));
 
   const python = findPython();
 
   return new Promise<NextResponse>((resolve) => {
-    const child = spawn(python, args, {
-      cwd: AGENT_DIR,
-      env: { ...process.env },
-    });
-
-    let stdout = "";
-    let stderr = "";
-
+    const child = spawn(python, args, { cwd: AGENT_DIR, env: { ...process.env } });
+    let stdout = "", stderr = "";
     child.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
     child.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
 
-    // 5 dakika zaman aşımı
     const timer = setTimeout(() => {
       child.kill();
-      resolve(
-        NextResponse.json(
-          { success: false, error: "Zaman aşımı (5 dk). Daha küçük bir batch deneyin." },
-          { status: 408 }
-        )
-      );
+      resolve(NextResponse.json(
+        { success: false, error: "Zaman aşımı (5 dk). Daha küçük bir batch deneyin." },
+        { status: 408 }
+      ));
     }, 300_000);
 
     child.on("close", (code: number) => {
       clearTimeout(timer);
-      if (code === 0) {
-        resolve(
-          NextResponse.json({
-            success: true,
-            output: stdout.slice(-3000),
-          })
-        );
-      } else {
-        resolve(
-          NextResponse.json(
-            {
-              success: false,
-              error: (stderr || stdout).slice(-1500),
-              code,
-            },
-            { status: 500 }
-          )
-        );
-      }
+      if (code === 0) resolve(NextResponse.json({ success: true, output: stdout.slice(-3000) }));
+      else resolve(NextResponse.json({ success: false, error: (stderr || stdout).slice(-1500), code }, { status: 500 }));
     });
   });
 }

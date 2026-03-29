@@ -1,24 +1,20 @@
 /**
- * GET /api/deadlines → Tüm öğrencilerin yaklaşan başvuru son tarihlerini toplar.
- * Deadline'ı olan, uygun veya şartlı programları döndürür.
+ * GET /api/deadlines → Tüm öğrencilerin yaklaşan başvuru son tarihlerini toplar (Neon)
  */
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
-
-const STUDENTS_DIR = path.resolve(process.cwd(), "../aes-agent/ogrenciler");
+import { sql } from "@/lib/db";
 
 interface DeadlineItem {
-  studentName: string;
-  university: string;
-  program: string;
-  city: string;
-  deadlineType: "WiSe" | "SoSe";
-  deadlineRaw: string;
-  deadlineParsed: string | null; // ISO date string YYYY-MM-DD
-  daysLeft: number | null;
-  eligibility: string;
-  url: string | null;
+  studentName:    string;
+  university:     string;
+  program:        string;
+  city:           string;
+  deadlineType:   "WiSe" | "SoSe";
+  deadlineRaw:    string;
+  deadlineParsed: string | null;
+  daysLeft:       number | null;
+  eligibility:    string;
+  url:            string | null;
 }
 
 const MONTHS_DE: Record<string, number> = {
@@ -31,99 +27,80 @@ function parseDeadline(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const s = raw.trim();
 
-  // DD.MM.YYYY
   let m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-  if (m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
 
-  // DD.MM (no year — assume current or next year)
   m = s.match(/^(\d{1,2})\.(\d{1,2})\.?$/);
   if (m) {
-    const now = new Date();
-    const year = now.getFullYear();
+    const now = new Date(); const year = now.getFullYear();
     const date = new Date(year, parseInt(m[2]) - 1, parseInt(m[1]));
     if (date < now) date.setFullYear(year + 1);
     return date.toISOString().slice(0, 10);
   }
 
-  // "15. Januar" / "15. März YYYY"
   m = s.match(/^(\d{1,2})\.\s*([A-Za-zä]+)\s*(\d{4})?/i);
   if (m) {
     const day = parseInt(m[1]);
     const mon = MONTHS_DE[m[2].toLowerCase()];
     if (mon) {
-      const now = new Date();
-      const year = m[3] ? parseInt(m[3]) : now.getFullYear();
+      const now = new Date(); const year = m[3] ? parseInt(m[3]) : now.getFullYear();
       const date = new Date(year, mon - 1, day);
       if (!m[3] && date < now) date.setFullYear(year + 1);
       return date.toISOString().slice(0, 10);
     }
   }
-
   return null;
 }
 
-function daysUntil(isoDate: string): number {
-  const target = new Date(isoDate + "T00:00:00");
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
+function daysUntil(iso: string): number {
+  const target = new Date(iso + "T00:00:00");
+  const now = new Date(); now.setHours(0, 0, 0, 0);
   return Math.round((target.getTime() - now.getTime()) / 86400000);
 }
 
 export async function GET() {
-  if (!fs.existsSync(STUDENTS_DIR)) return NextResponse.json([]);
+  try {
+    // En son araştırma sonuçlarını tüm öğrenciler için çek
+    const rows = await sql`
+      SELECT DISTINCT ON (student_name) student_name, results
+      FROM student_results
+      ORDER BY student_name, id DESC
+    ` as Array<{ student_name: string; results: Array<Record<string, unknown>> }>;
 
-  const items: DeadlineItem[] = [];
+    const items: DeadlineItem[] = [];
 
-  const folders = fs.readdirSync(STUDENTS_DIR)
-    .filter((f) => fs.statSync(path.join(STUDENTS_DIR, f)).isDirectory());
+    for (const row of rows) {
+      const results = row.results ?? [];
+      for (const p of results) {
+        if (!["uygun", "sartli"].includes(String(p.eligibility ?? ""))) continue;
 
-  for (const studentName of folders) {
-    const folder = path.join(STUDENTS_DIR, studentName);
-    const files = fs.readdirSync(folder)
-      .filter((f) => f.startsWith("arastirma_") && f.endsWith(".json"))
-      .sort().reverse();
-    if (!files.length) continue;
-
-    try {
-      const data = JSON.parse(fs.readFileSync(path.join(folder, files[0]), "utf-8")) as Array<{
-        university: string;
-        program: string;
-        city?: string;
-        eligibility: string;
-        deadline_wise?: string | null;
-        deadline_sose?: string | null;
-        url?: string | null;
-      }>;
-
-      for (const p of data) {
-        if (!["uygun", "sartli"].includes(p.eligibility)) continue;
-
-        for (const [type, raw] of [["WiSe", p.deadline_wise], ["SoSe", p.deadline_sose]] as [string, string | null | undefined][]) {
-          if (!raw) continue;
+        for (const [type, rawVal] of [["WiSe", p.deadline_wise], ["SoSe", p.deadline_sose]] as [string, unknown][]) {
+          if (!rawVal) continue;
+          const raw    = String(rawVal);
           const parsed = parseDeadline(raw);
-          const days = parsed ? daysUntil(parsed) : null;
-          // Sadece gelecekteki (< 90 gün) deadline'ları göster
+          const days   = parsed ? daysUntil(parsed) : null;
           if (days !== null && days >= -7 && days <= 90) {
             items.push({
-              studentName,
-              university: p.university,
-              program: p.program,
-              city: p.city ?? "",
-              deadlineType: type as "WiSe" | "SoSe",
-              deadlineRaw: raw,
+              studentName:    row.student_name,
+              university:     String(p.university ?? ""),
+              program:        String(p.program ?? ""),
+              city:           String(p.city ?? ""),
+              deadlineType:   type as "WiSe" | "SoSe",
+              deadlineRaw:    raw,
               deadlineParsed: parsed,
-              daysLeft: days,
-              eligibility: p.eligibility,
-              url: p.url ?? null,
+              daysLeft:       days,
+              eligibility:    String(p.eligibility ?? ""),
+              url:            p.url ? String(p.url) : null,
             });
           }
         }
       }
-    } catch { /* ignore */ }
+    }
+
+    items.sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999));
+    return NextResponse.json(items);
+  } catch (err) {
+    console.error("[deadlines GET]", err);
+    return NextResponse.json([]);
   }
-
-  // En yakın deadline önce
-  items.sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999));
-
-  return NextResponse.json(items);
 }
